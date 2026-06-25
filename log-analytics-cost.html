@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Log Analytics Cost Projector</title>
+<style>
+  :root {
+    --bg:        #0f1117;
+    --surface:   #1a1d27;
+    --surface2:  #222535;
+    --border:    #2e3250;
+    --text:      #e2e8f0;
+    --muted:     #8892a4;
+    --accent:    #4f81f7;
+    --danger:    #f06a6a;
+    --warn:      #f5a623;
+    --ok:        #52c78f;
+    --sub:       #b47fe8;
+    --rg:        #5bc0de;
+    --res:       #8892a4;
+    --radius:    8px;
+    --font:      "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; min-height: 100vh; }
+  a { color: inherit; }
+
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 14px 28px; display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .logo { font-size: 22px; }
+  .crumbs { font-size: 12px; color: var(--muted); }
+  .crumbs a { color: var(--muted); text-decoration: none; }
+  .crumbs a:hover { color: var(--accent); }
+  h1 { font-size: 17px; font-weight: 600; letter-spacing: -.2px; }
+  .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+  button {
+    font-family: var(--font); font-size: 13px; cursor: pointer;
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 13px; transition: border-color .15s, background .15s;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { background: #3f6fe0; }
+  button.ghost { background: transparent; }
+
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 28px 60px; }
+
+  /* ── empty state ───────────────────────────────────────────── */
+  .empty {
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 70px 20px; gap: 14px;
+  }
+  body.needs-data .empty { display: flex; }
+  body.needs-data .has-data { display: none !important; }
+  .empty .big { font-size: 46px; }
+  .empty h2 { font-size: 20px; font-weight: 700; }
+  .empty p { color: var(--muted); max-width: 520px; line-height: 1.5; }
+
+  /* ── progress ──────────────────────────────────────────────── */
+  .scan-banner {
+    display: none; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px; margin-bottom: 20px;
+  }
+  .scan-banner.active { display: block; }
+  .scan-banner .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .scan-banner .phase { font-weight: 600; }
+  .scan-banner .pct { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar { height: 7px; background: var(--surface2); border-radius: 999px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--sub)); transition: width .3s; }
+  .scan-log { margin-top: 10px; font-size: 12px; color: var(--muted); font-family: ui-monospace, monospace; max-height: 86px; overflow-y: auto; line-height: 1.5; }
+
+  /* ── selectors panel ───────────────────────────────────────── */
+  .selectors { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 20px; }
+  .selectors h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .selectors .hint { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .sel-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 760px) { .sel-grid { grid-template-columns: 1fr; } }
+  .sel-grid label.lbl { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .sel-grid select {
+    width: 100%; box-sizing: border-box; background: var(--surface2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+    font-size: 13px; font-family: var(--font); cursor: pointer;
+  }
+  .sel-grid select:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ── forecast horizon toggle ───────────────────────────────── */
+  .horizon-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .horizon-wrap .hlabel { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .horizon { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .horizon button { border: none; border-radius: 0; border-right: 1px solid var(--border); padding: 7px 16px; background: var(--surface); }
+  .horizon button:last-child { border-right: none; }
+  .horizon button.active { background: var(--accent); color: #fff; font-weight: 600; }
+  .horizon button:hover:not(.active) { background: var(--surface2); }
+
+  /* ── cards ─────────────────────────────────────────────────── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+  .card-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 7px; }
+  .card-value { font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
+  .card-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .card.accent .card-value { color: var(--accent); }
+  .card.sub .card-value { color: var(--sub); }
+  .card.rg .card-value { color: var(--rg); }
+  .card.ok .card-value { color: var(--ok); }
+  .card.proj .card-value { color: var(--warn); }
+
+  /* ── toolbar ───────────────────────────────────────────────── */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .toolbar input[type="text"] {
+    font-family: var(--font); font-size: 13px; background: var(--surface2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 11px; min-width: 240px; flex: 1;
+  }
+  .toolbar input::placeholder { color: var(--muted); }
+  .toolbar .spacer { flex: 1; }
+  .filter-summary { font-size: 12px; color: var(--muted); }
+  .export-btn { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .export-btn:hover { background: #3f6fe0; }
+
+  /* ── table ─────────────────────────────────────────────────── */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface); }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th .sort-indicator { color: var(--accent); margin-left: 4px; }
+  tbody tr { cursor: pointer; transition: background .1s; }
+  tbody tr:hover { background: var(--surface2); }
+  td .plan-pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
+  .plan-pill.Analytics { color: var(--rg); border-color: var(--rg); }
+  .plan-pill.Basic { color: var(--muted); border-color: var(--border); }
+  .table-name { font-weight: 500; }
+  .empty-rows { text-align: center; color: var(--muted); padding: 40px; }
+  tfoot td { font-weight: 700; background: var(--surface2); border-top: 2px solid var(--border); }
+
+  /* ── pager ─────────────────────────────────────────────────── */
+  .pager { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; }
+  .pager button { padding: 5px 11px; min-width: 34px; }
+  .pager button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pager .ell { color: var(--muted); padding: 0 4px; }
+
+  /* ── detail panel ──────────────────────────────────────────── */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 90; display: none; }
+  .overlay.open { display: block; }
+  .detail { position: fixed; top: 0; right: 0; height: 100%; width: 440px; max-width: 92vw; background: var(--surface); border-left: 1px solid var(--border); z-index: 100; transform: translateX(100%); transition: transform .2s; overflow-y: auto; }
+  .detail.open { transform: translateX(0); }
+  .detail .dhead { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+  .detail .dhead h3 { font-size: 15px; font-weight: 600; word-break: break-all; }
+  .detail .dbody { padding: 20px; }
+  .detail .drow { margin-bottom: 16px; }
+  .detail .drow .k { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 4px; }
+  .detail .drow .v { font-size: 14px; }
+  .breakdown { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  .breakdown li { display: flex; justify-content: space-between; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 13px; }
+  .breakdown li .bl { color: var(--muted); }
+  .breakdown li.tot { border-left: 3px solid var(--warn); font-weight: 700; }
+
+  /* ── light theme (toggled via .light on <html>) ──────────────── */
+  html.light {
+    --bg:       #f4f6fb;
+    --surface:  #ffffff;
+    --surface2: #eef1f7;
+    --border:   #d4d9e6;
+    --text:     #1c2230;
+    --muted:    #5c6679;
+    --accent:   #3a6ae0;
+  }
+  /* ── theme toggle (fixed, bottom-left) ───────────────────────── */
+  .theme-toggle {
+    position: fixed; left: 18px; bottom: 18px; z-index: 50;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 8px 14px; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    transition: border-color .15s, background .15s, color .15s;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle .ico { font-size: 15px; line-height: 1; }
+</style>
+<script>
+  // Apply the saved theme before first paint to avoid a flash of the wrong theme.
+  (function () {
+    try { if (localStorage.getItem('azureHub.theme') === 'light') document.documentElement.classList.add('light'); } catch (e) {}
+  })();
+</script>
+</head>
+<body class="needs-data">
+
+<header>
+  <span class="logo">📊</span>
+  <div>
+    <div class="crumbs"><a href="/">Azure Engineering</a> › Log Analytics Cost Projector</div>
+    <h1>Log Analytics Cost Projector</h1>
+  </div>
+  <div class="header-actions">
+    <button id="refreshBtn" class="ghost" onclick="loadResults(true)" title="Reload last projection">↻</button>
+    <button id="scanBtn" class="primary" onclick="startScan()" disabled>Run Projection</button>
+    <button id="cancelBtn" class="ghost" onclick="cancelScan()" style="display:none;">Cancel</button>
+  </div>
+</header>
+
+<main>
+  <!-- workspace selectors (always visible) -->
+  <div class="selectors">
+    <h3>Workspace</h3>
+    <div class="hint">Pick a subscription, then its resource group, then a Log Analytics workspace.
+       Cost is projected per table from each table's billable ingestion and current retention settings.</div>
+    <div class="sel-grid">
+      <div>
+        <label class="lbl" for="selSub">Subscription</label>
+        <select id="selSub" onchange="onSubChange()"><option value="">Loading…</option></select>
+      </div>
+      <div>
+        <label class="lbl" for="selRg">Resource group</label>
+        <select id="selRg" onchange="onRgChange()" disabled><option value="">Select a subscription first</option></select>
+      </div>
+      <div>
+        <label class="lbl" for="selWs">Log Analytics workspace</label>
+        <select id="selWs" onchange="onWsChange()" disabled><option value="">Select a resource group first</option></select>
+      </div>
+    </div>
+  </div>
+
+  <!-- empty state -->
+  <div class="empty">
+    <div class="big">📊</div>
+    <h2>No cost projection yet</h2>
+    <p>Select a workspace above and run a projection. Each table is costed from its billable
+       ingestion (31-day average) and current interactive + archive retention, using live
+       Azure Retail Prices for the workspace region. Then choose a 1 / 3 / 6 / 12-month horizon.</p>
+  </div>
+
+  <!-- progress -->
+  <div class="scan-banner" id="scanBanner">
+    <div class="top">
+      <span class="phase" id="scanPhase">Starting…</span>
+      <span class="pct" id="scanPct">0%</span>
+    </div>
+    <div class="bar"><i id="scanBar"></i></div>
+    <div class="scan-log" id="scanLog"></div>
+  </div>
+
+  <!-- forecast horizon -->
+  <div class="horizon-wrap has-data">
+    <span class="hlabel">Forecast horizon</span>
+    <div class="horizon" id="horizon">
+      <button data-m="1" onclick="setHorizon(1)">1 mo</button>
+      <button data-m="3" onclick="setHorizon(3)">3 mo</button>
+      <button data-m="6" onclick="setHorizon(6)">6 mo</button>
+      <button data-m="12" class="active" onclick="setHorizon(12)">12 mo (year)</button>
+    </div>
+    <span class="filter-summary" id="horizonNote"></span>
+  </div>
+
+  <!-- summary cards -->
+  <div class="cards has-data">
+    <div class="card"><div class="card-label">Tables</div><div class="card-value" id="cTables">—</div><div class="card-sub" id="cTablesSub"></div></div>
+    <div class="card rg"><div class="card-label">Volume / mo</div><div class="card-value" id="cGb">—</div><div class="card-sub">billable GB</div></div>
+    <div class="card accent"><div class="card-label">Monthly run-rate</div><div class="card-value" id="cMonthly">—</div><div class="card-sub" id="cMonthlySub"></div></div>
+    <div class="card"><div class="card-label">Ingestion / mo</div><div class="card-value" id="cIngest">—</div><div class="card-sub">ingestion only</div></div>
+    <div class="card"><div class="card-label">Retention / mo</div><div class="card-value" id="cRetain">—</div><div class="card-sub">interactive + archive</div></div>
+    <div class="card proj"><div class="card-label" id="cProjLabel">Projected (12 mo)</div><div class="card-value" id="cProj">—</div><div class="card-sub">forecast total</div></div>
+  </div>
+
+  <!-- toolbar -->
+  <div class="toolbar has-data">
+    <input type="text" id="search" placeholder="Filter tables…" oninput="onSearch()" />
+    <span class="spacer"></span>
+    <span class="filter-summary" id="filterSummary"></span>
+    <button class="export-btn" onclick="exportCsv()">Export CSV</button>
+  </div>
+
+  <!-- table -->
+  <div class="table-wrap has-data">
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th data-key="TableName" onclick="sortBy('TableName')">Table<span class="sort-indicator"></span></th>
+          <th data-key="Plan" onclick="sortBy('Plan')">Plan<span class="sort-indicator"></span></th>
+          <th class="num" data-key="RetentionInDays" onclick="sortBy('RetentionInDays')" title="Interactive retention (days)">Retention<span class="sort-indicator"></span></th>
+          <th class="num" data-key="ArchiveDays" onclick="sortBy('ArchiveDays')" title="Archive retention beyond interactive (days)">Archive<span class="sort-indicator"></span></th>
+          <th class="num" data-key="MonthlyGB" onclick="sortBy('MonthlyGB')">GB / mo<span class="sort-indicator"></span></th>
+          <th class="num" data-key="IngestionCostMonthly" onclick="sortBy('IngestionCostMonthly')">Ingest / mo<span class="sort-indicator"></span></th>
+          <th class="num" data-key="RetentionCostMonthly" onclick="sortBy('RetentionCostMonthly')">Retain / mo<span class="sort-indicator"></span></th>
+          <th class="num" data-key="MonthlyCost" onclick="sortBy('MonthlyCost')">Total / mo<span class="sort-indicator"></span></th>
+          <th class="num" data-key="MonthlyCost" onclick="sortBy('MonthlyCost')" id="thProj">Projected<span class="sort-indicator"></span></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+      <tfoot id="tfoot"></tfoot>
+    </table>
+    <div class="pager" id="pager"></div>
+  </div>
+</main>
+
+<!-- detail panel -->
+<div class="overlay" id="overlay" onclick="closeDetail()"></div>
+<aside class="detail" id="detail">
+  <div class="dhead">
+    <h3 id="dTitle">Table</h3>
+    <button class="ghost" onclick="closeDetail()">✕</button>
+  </div>
+  <div class="dbody" id="dBody"></div>
+</aside>
+
+<button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">
+  <span class="ico" id="themeIco">🌙</span><span id="themeLabel">Dark</span>
+</button>
+
+<script>
+  /* ── helpers ─────────────────────────────────────────────────── */
+  function asArray(v) { return Array.isArray(v) ? v : (v == null ? [] : [v]); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+  let META = null;          // ScanMetadata of the loaded projection
+  let ROWS = [];            // table records
+  let horizon = 12;         // forecast months
+  let sortKey = 'MonthlyCost', sortDir = -1;
+  let currentPage = 1;
+  const PAGE = 25;
+  let pollTimer = null;
+  let currency = 'USD';
+  let workspaces = [];      // workspaces in the selected subscription
+
+  function fmtMoney(v) {
+    return Number(v || 0).toLocaleString('en-US', { style: 'currency', currency, maximumFractionDigits: 2 });
+  }
+  function fmtGb(v) {
+    const n = Number(v || 0);
+    return n.toLocaleString('en-US', { maximumFractionDigits: n < 10 ? 2 : 1 });
+  }
+
+  /* ── cascading workspace selection ───────────────────────────── */
+  async function loadSubs() {
+    const sel = document.getElementById('selSub');
+    try {
+      const r = await fetch('/api/subscriptions');
+      if (!r.ok) throw new Error();
+      const subs = asArray((await r.json()).subscriptions);
+      if (!subs.length) { sel.innerHTML = '<option value="">No subscriptions</option>'; return; }
+      sel.innerHTML = '<option value="">Select a subscription…</option>' +
+        subs.map(s => `<option value="${esc(s.Id)}">${esc(s.Name)}</option>`).join('');
+    } catch {
+      sel.innerHTML = '<option value="">Server offline — start Start-Dashboard.ps1</option>';
+    }
+  }
+
+  async function onSubChange() {
+    const subId = document.getElementById('selSub').value;
+    const rgSel = document.getElementById('selRg');
+    const wsSel = document.getElementById('selWs');
+    resetWsSelect(); rgSel.disabled = true;
+    rgSel.innerHTML = '<option value="">Loading…</option>';
+    updateScanBtn();
+    if (!subId) { rgSel.innerHTML = '<option value="">Select a subscription first</option>'; return; }
+    try {
+      const r = await fetch('/api/la/workspaces?subscriptionId=' + encodeURIComponent(subId));
+      if (!r.ok) throw new Error();
+      workspaces = asArray((await r.json()).workspaces);
+      const rgs = [...new Set(workspaces.map(w => w.ResourceGroup))].sort((a, b) => a.localeCompare(b));
+      if (!rgs.length) { rgSel.innerHTML = '<option value="">No Log Analytics workspaces found</option>'; return; }
+      rgSel.innerHTML = '<option value="">Select a resource group…</option>' +
+        rgs.map(rg => `<option value="${esc(rg)}">${esc(rg)}</option>`).join('');
+      rgSel.disabled = false;
+    } catch {
+      rgSel.innerHTML = '<option value="">Could not list workspaces</option>';
+    }
+  }
+
+  function onRgChange() {
+    const rg = document.getElementById('selRg').value;
+    const wsSel = document.getElementById('selWs');
+    resetWsSelect();
+    updateScanBtn();
+    if (!rg) return;
+    const inRg = workspaces.filter(w => w.ResourceGroup === rg);
+    wsSel.innerHTML = '<option value="">Select a workspace…</option>' +
+      inRg.map(w => `<option value="${esc(w.Name)}" data-cid="${esc(w.CustomerId)}">${esc(w.Name)}</option>`).join('');
+    wsSel.disabled = false;
+  }
+
+  function onWsChange() { updateScanBtn(); }
+
+  function resetWsSelect() {
+    const wsSel = document.getElementById('selWs');
+    wsSel.disabled = true;
+    wsSel.innerHTML = '<option value="">Select a resource group first</option>';
+  }
+
+  function selectedWorkspace() {
+    const subId = document.getElementById('selSub').value;
+    const rg = document.getElementById('selRg').value;
+    const wsSel = document.getElementById('selWs');
+    const wsName = wsSel.value;
+    if (!subId || !rg || !wsName) return null;
+    const cid = wsSel.options[wsSel.selectedIndex]?.dataset.cid || '';
+    return { subscriptionId: subId, resourceGroup: rg, workspaceName: wsName, workspaceId: cid };
+  }
+
+  function updateScanBtn() {
+    document.getElementById('scanBtn').disabled = !selectedWorkspace();
+  }
+
+  /* ── scan lifecycle ──────────────────────────────────────────── */
+  async function startScan() {
+    const ws = selectedWorkspace();
+    if (!ws) { alert('Pick a subscription, resource group and workspace first.'); return; }
+    try {
+      const r = await fetch('/api/la/scan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...ws, lookbackDays: 31 })
+      });
+      if (r.status === 409) { alert('A projection is already running.'); return; }
+      if (!r.ok) { const e = await r.json().catch(() => ({})); alert('Could not start: ' + (e.error || 'unknown error')); return; }
+      setScanning(true);
+      pollStatus();
+    } catch { alert('Could not reach the dashboard server. Is Start-Dashboard.ps1 running?'); }
+  }
+
+  async function cancelScan() { try { await fetch('/api/la/scan/cancel', { method: 'POST' }); } catch {} }
+
+  function setScanning(on) {
+    document.getElementById('scanBtn').disabled = on || !selectedWorkspace();
+    document.getElementById('cancelBtn').style.display = on ? '' : 'none';
+    document.getElementById('scanBanner').classList.toggle('active', on);
+  }
+
+  async function pollStatus() {
+    if (pollTimer) clearTimeout(pollTimer);
+    try {
+      const r = await fetch('/api/la/status');
+      const s = await r.json();
+      const prog = s.Progress;
+      if (prog) {
+        document.getElementById('scanPhase').textContent = prog.Message || (prog.Phase === 'done' ? 'Finishing…' : 'Scanning…');
+        document.getElementById('scanPct').textContent = (prog.Percent ?? 0) + '%';
+        document.getElementById('scanBar').style.width = (prog.Percent ?? 0) + '%';
+        document.getElementById('scanLog').innerHTML = asArray(prog.LogTail).map(l => `<div>${esc(l)}</div>`).join('');
+      }
+      if (s.State === 'running') {
+        pollTimer = setTimeout(pollStatus, 1200);
+      } else {
+        setScanning(false);
+        if (s.State === 'failed') {
+          document.getElementById('scanPhase').textContent = 'Projection failed: ' + (s.Message || 'unknown error');
+          document.getElementById('scanBanner').classList.add('active');
+        } else if (s.State !== 'cancelled') {
+          await loadResults(false);
+        }
+      }
+    } catch {
+      setScanning(false);
+    }
+  }
+
+  /* ── load + render ───────────────────────────────────────────── */
+  async function loadResults(manual) {
+    try {
+      const r = await fetch('/api/la/results');
+      if (!r.ok) throw new Error();
+      applyData(await r.json());
+    } catch {
+      if (manual) alert('Could not reach the dashboard server.');
+    }
+  }
+
+  function applyData(json) {
+    if (!json || !json.ScanMetadata || !asArray(json.Tables).length) {
+      document.body.classList.add('needs-data');
+      return;
+    }
+    META = json.ScanMetadata;
+    ROWS = asArray(json.Tables);
+    currency = META.Currency || 'USD';
+    document.body.classList.remove('needs-data');
+    currentPage = 1;
+    renderCards();
+    renderTable();
+  }
+
+  function renderCards() {
+    document.getElementById('cTables').textContent = META.TableCount ?? ROWS.length;
+    document.getElementById('cTablesSub').textContent =
+      `${esc(META.WorkspaceName || '')}${META.Region ? ' · ' + esc(META.Region) : ''}`;
+    document.getElementById('cGb').textContent = fmtGb(META.TotalMonthlyGB);
+    document.getElementById('cMonthly').textContent = fmtMoney(META.TotalMonthlyCost);
+    document.getElementById('cMonthlySub').textContent = esc(META.PriceSource || '');
+    document.getElementById('cIngest').textContent = fmtMoney(META.TotalIngestionMonthly);
+    document.getElementById('cRetain').textContent = fmtMoney(META.TotalRetentionMonthly);
+    renderProjectionCard();
+  }
+
+  function renderProjectionCard() {
+    const total = Number(META.TotalMonthlyCost || 0) * horizon;
+    document.getElementById('cProjLabel').textContent = `Projected (${horizon} mo)`;
+    document.getElementById('cProj').textContent = fmtMoney(total);
+    document.getElementById('horizonNote').textContent =
+      `Run-rate × ${horizon} month${horizon === 1 ? '' : 's'} (retention assumed at steady state).`;
+    document.getElementById('thProj').firstChild.textContent = `Projected (${horizon}m)`;
+  }
+
+  function setHorizon(m) {
+    horizon = m;
+    document.querySelectorAll('#horizon button').forEach(b => b.classList.toggle('active', Number(b.dataset.m) === m));
+    if (META) { renderProjectionCard(); renderTable(); }
+  }
+
+  function getFilteredRows() {
+    const q = (document.getElementById('search').value || '').toLowerCase().trim();
+    let rows = q ? ROWS.filter(r => String(r.TableName || '').toLowerCase().includes(q)) : ROWS.slice();
+    rows.sort((a, b) => {
+      let av = a[sortKey], bv = b[sortKey];
+      if (typeof av === 'string' || typeof bv === 'string') {
+        return String(av).localeCompare(String(bv)) * sortDir;
+      }
+      return ((av || 0) - (bv || 0)) * sortDir;
+    });
+    return rows;
+  }
+
+  function sortBy(key) {
+    if (sortKey === key) { sortDir *= -1; } else { sortKey = key; sortDir = (key === 'TableName' || key === 'Plan') ? 1 : -1; }
+    currentPage = 1;
+    renderTable();
+  }
+
+  function renderTable() {
+    const rows = getFilteredRows();
+    document.querySelectorAll('th .sort-indicator').forEach(s => s.textContent = '');
+    const th = document.querySelector(`th[data-key="${sortKey}"] .sort-indicator`);
+    if (th) th.textContent = sortDir > 0 ? '▲' : '▼';
+
+    const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+    if (currentPage > pages) currentPage = pages;
+    const slice = rows.slice((currentPage - 1) * PAGE, currentPage * PAGE);
+
+    const tbody = document.getElementById('tbody');
+    if (!slice.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-rows">No tables match the filter.</td></tr>';
+    } else {
+      tbody.innerHTML = slice.map(r => {
+        const gi = rows.indexOf(r);
+        const plan = esc(r.Plan || 'Analytics');
+        const proj = Number(r.MonthlyCost || 0) * horizon;
+        return `<tr onclick="openDetail(${gi})">
+          <td class="table-name">${esc(r.TableName)}</td>
+          <td><span class="plan-pill ${plan}">${plan}</span></td>
+          <td class="num">${r.RetentionInDays ?? '—'}</td>
+          <td class="num">${r.ArchiveDays ? r.ArchiveDays : '—'}</td>
+          <td class="num">${fmtGb(r.MonthlyGB)}</td>
+          <td class="num">${fmtMoney(r.IngestionCostMonthly)}</td>
+          <td class="num">${fmtMoney(r.RetentionCostMonthly + r.ArchiveCostMonthly)}</td>
+          <td class="num">${fmtMoney(r.MonthlyCost)}</td>
+          <td class="num">${fmtMoney(proj)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // totals footer (across the full filtered set, not just the page)
+    const t = rows.reduce((a, r) => {
+      a.gb += Number(r.MonthlyGB || 0); a.ing += Number(r.IngestionCostMonthly || 0);
+      a.ret += Number(r.RetentionCostMonthly || 0) + Number(r.ArchiveCostMonthly || 0);
+      a.mo += Number(r.MonthlyCost || 0);
+      return a;
+    }, { gb: 0, ing: 0, ret: 0, mo: 0 });
+    document.getElementById('tfoot').innerHTML = `<tr>
+      <td>Total (${rows.length})</td><td></td><td></td><td></td>
+      <td class="num">${fmtGb(t.gb)}</td>
+      <td class="num">${fmtMoney(t.ing)}</td>
+      <td class="num">${fmtMoney(t.ret)}</td>
+      <td class="num">${fmtMoney(t.mo)}</td>
+      <td class="num">${fmtMoney(t.mo * horizon)}</td>
+    </tr>`;
+
+    document.getElementById('filterSummary').textContent =
+      `${rows.length} of ${ROWS.length} table${ROWS.length === 1 ? '' : 's'}`;
+    renderPager(pages);
+  }
+
+  function renderPager(pages) {
+    const el = document.getElementById('pager');
+    if (pages <= 1) { el.innerHTML = ''; return; }
+    let html = `<button onclick="goPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>‹</button>`;
+    for (let p = 1; p <= pages; p++) {
+      if (p === 1 || p === pages || Math.abs(p - currentPage) <= 1) {
+        html += `<button class="${p === currentPage ? 'active' : ''}" onclick="goPage(${p})">${p}</button>`;
+      } else if (p === currentPage - 2 || p === currentPage + 2) {
+        html += `<span class="ell">…</span>`;
+      }
+    }
+    html += `<button onclick="goPage(${currentPage + 1})" ${currentPage === pages ? 'disabled' : ''}>›</button>`;
+    el.innerHTML = html;
+  }
+  function goPage(p) { currentPage = p; renderTable(); }
+  function onSearch() { currentPage = 1; renderTable(); }
+
+  /* ── detail panel ────────────────────────────────────────────── */
+  function openDetail(gi) {
+    const rows = getFilteredRows();
+    const r = rows[gi];
+    if (!r) return;
+    const proj = Number(r.MonthlyCost || 0) * horizon;
+    document.getElementById('dTitle').textContent = r.TableName;
+    document.getElementById('dBody').innerHTML = `
+      <div class="drow"><div class="k">Plan</div><div class="v">${esc(r.Plan || 'Analytics')}</div></div>
+      <div class="drow"><div class="k">Retention</div><div class="v">${r.RetentionInDays} days interactive · ${r.TotalRetentionInDays} days total (${r.ArchiveDays} archive)</div></div>
+      <div class="drow"><div class="k">Billable volume</div><div class="v">${fmtGb(r.MonthlyGB)} GB / mo · ${fmtGb(r.DailyGB)} GB / day · ${fmtGb(r.BillableGBLookback)} GB over lookback</div></div>
+      <div class="drow"><div class="k">Unit prices</div><div class="v">Ingest ${fmtMoney(r.IngestionPricePerGB)}/GB · Retain ${fmtMoney(r.RetentionPricePerGBMonth)}/GB·mo · Archive ${fmtMoney(r.ArchivePricePerGBMonth)}/GB·mo</div></div>
+      <div class="drow"><div class="k">Monthly cost breakdown</div>
+        <ul class="breakdown">
+          <li><span class="bl">Ingestion</span><span>${fmtMoney(r.IngestionCostMonthly)}</span></li>
+          <li><span class="bl">Interactive retention</span><span>${fmtMoney(r.RetentionCostMonthly)}</span></li>
+          <li><span class="bl">Archive retention</span><span>${fmtMoney(r.ArchiveCostMonthly)}</span></li>
+          <li class="tot"><span class="bl">Monthly run-rate</span><span>${fmtMoney(r.MonthlyCost)}</span></li>
+          <li class="tot"><span class="bl">Projected over ${horizon} mo</span><span>${fmtMoney(proj)}</span></li>
+        </ul>
+      </div>`;
+    document.getElementById('overlay').classList.add('open');
+    document.getElementById('detail').classList.add('open');
+  }
+  function closeDetail() {
+    document.getElementById('overlay').classList.remove('open');
+    document.getElementById('detail').classList.remove('open');
+  }
+
+  /* ── CSV export (with formula-injection guard) ───────────────── */
+  function csvCell(v) {
+    let s = String(v == null ? '' : v);
+    if (/^[=+\-@]/.test(s)) s = "'" + s;          // neutralize spreadsheet formula injection
+    if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  function exportCsv() {
+    const rows = getFilteredRows();
+    if (!rows.length) { alert('Nothing to export.'); return; }
+    const header = ['Table', 'Plan', 'RetentionDays', 'ArchiveDays', 'MonthlyGB',
+      'IngestionMonthly', 'RetentionMonthly', 'ArchiveMonthly', 'MonthlyTotal', `Projected_${horizon}mo`, 'Currency'];
+    const lines = [header.join(',')];
+    rows.forEach(r => {
+      lines.push([
+        r.TableName, r.Plan, r.RetentionInDays, r.ArchiveDays, r.MonthlyGB,
+        r.IngestionCostMonthly, r.RetentionCostMonthly, r.ArchiveCostMonthly, r.MonthlyCost,
+        (Number(r.MonthlyCost || 0) * horizon).toFixed(2), currency
+      ].map(csvCell).join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `la-cost-${(META.WorkspaceName || 'workspace')}-${horizon}mo.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  /* ── theme toggle ────────────────────────────────────────────── */
+  function applyThemeButton() {
+    const light = document.documentElement.classList.contains('light');
+    document.getElementById('themeIco').textContent = light ? '☀️' : '🌙';
+    document.getElementById('themeLabel').textContent = light ? 'Light' : 'Dark';
+  }
+  function toggleTheme() {
+    const light = document.documentElement.classList.toggle('light');
+    try { localStorage.setItem('azureHub.theme', light ? 'light' : 'dark'); } catch (e) {}
+    applyThemeButton();
+  }
+  applyThemeButton();
+
+  /* ── boot ────────────────────────────────────────────────────── */
+  loadSubs();
+  loadResults(false);
+</script>
+</body>
+</html>

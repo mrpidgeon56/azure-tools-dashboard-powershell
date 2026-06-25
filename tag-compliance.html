@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tag Auditor</title>
+<style>
+  :root {
+    --bg:        #0f1117;
+    --surface:   #1a1d27;
+    --surface2:  #222535;
+    --border:    #2e3250;
+    --text:      #e2e8f0;
+    --muted:     #8892a4;
+    --accent:    #4f81f7;
+    --danger:    #f06a6a;
+    --warn:      #f5a623;
+    --ok:        #52c78f;
+    --sub:       #b47fe8;
+    --rg:        #5bc0de;
+    --res:       #8892a4;
+    --radius:    8px;
+    --font:      "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; min-height: 100vh; }
+  a { color: inherit; }
+
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 14px 28px; display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .logo { font-size: 22px; }
+  .crumbs { font-size: 12px; color: var(--muted); }
+  .crumbs a { color: var(--muted); text-decoration: none; }
+  .crumbs a:hover { color: var(--accent); }
+  h1 { font-size: 17px; font-weight: 600; letter-spacing: -.2px; }
+  .header-meta { font-size: 12px; color: var(--muted); }
+  .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; position: relative; }
+
+  button {
+    font-family: var(--font); font-size: 13px; cursor: pointer;
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 13px; transition: border-color .15s, background .15s;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { background: #3f6fe0; }
+  button.ghost { background: transparent; }
+
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 28px 60px; }
+
+  /* ── empty state ───────────────────────────────────────────── */
+  .empty {
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 70px 20px; gap: 14px;
+  }
+  body.needs-data .empty { display: flex; }
+  body.needs-data .has-data { display: none !important; }
+  body.needs-data .cards { display: none !important; }
+  .empty .big { font-size: 46px; }
+  .empty h2 { font-size: 20px; font-weight: 700; }
+  .empty p { color: var(--muted); max-width: 480px; line-height: 1.5; }
+
+  /* ── progress ──────────────────────────────────────────────── */
+  .scan-banner {
+    display: none; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px; margin-bottom: 20px;
+  }
+  .scan-banner.active { display: block; }
+  .scan-banner .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .scan-banner .phase { font-weight: 600; }
+  .scan-banner .pct { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar { height: 7px; background: var(--surface2); border-radius: 999px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--sub)); transition: width .3s; }
+  .scan-log { margin-top: 10px; font-size: 12px; color: var(--muted); font-family: ui-monospace, monospace; max-height: 86px; overflow-y: auto; line-height: 1.5; }
+
+  /* ── cards ─────────────────────────────────────────────────── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+  .card-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 7px; }
+  .card-value { font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
+  .card-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .card.flagged .card-value { color: var(--danger); }
+  .card.sub .card-value { color: var(--sub); }
+  .card.rg .card-value { color: var(--rg); }
+  .card.ok .card-value { color: var(--ok); }
+
+  /* ── heatmap ───────────────────────────────────────────────── */
+  .heatmap-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 22px; }
+  .heatmap-wrap h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .heatmap-wrap .hint { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .heatmap { display: flex; flex-wrap: wrap; gap: 8px; }
+  .heat-cell {
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; cursor: pointer;
+    min-width: 140px; flex: 1 1 0; transition: transform .12s, border-color .12s;
+  }
+  .heat-cell:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .heat-cell.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .heat-cell .hc-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+  .heat-cell .hc-count { font-size: 20px; font-weight: 700; margin-top: 4px; }
+  .heat-cell .hc-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* ── toolbar ───────────────────────────────────────────────── */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .toolbar input[type="text"], .toolbar select {
+    font-family: var(--font); font-size: 13px; background: var(--surface2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 11px;
+  }
+  .toolbar input[type="text"] { min-width: 240px; flex: 1; }
+  .toolbar input::placeholder { color: var(--muted); }
+  .toolbar .toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
+  .toolbar .spacer { flex: 1; }
+
+  .filter-summary { font-size: 12px; color: var(--muted); }
+  .col-btn.export-btn { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .col-btn.export-btn:hover { background: #3f6fe0; }
+
+  /* ── tag rules panel (inline, full-width) ─────────────────────── */
+  .tag-rules { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 20px; }
+  .tag-rules .tr-head { margin-bottom: 14px; }
+  .tag-rules .tr-head h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .tag-rules .tr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 700px) { .tag-rules .tr-grid { grid-template-columns: 1fr; } }
+  .tag-rules label.lbl { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .tag-rules textarea { width: 100%; box-sizing: border-box; background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-family: ui-monospace, monospace; font-size: 12px; resize: vertical; }
+  .tag-rules .hint { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+  .tag-rules .tr-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  @media (max-width: 700px) { .tag-rules .tr-opts { grid-template-columns: 1fr; } }
+  .tag-rules select { width: 100%; box-sizing: border-box; background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 13px; font-family: var(--font); cursor: pointer; }
+
+  /* ── table ─────────────────────────────────────────────────── */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface); }
+  th .sort-indicator { color: var(--accent); margin-left: 4px; }
+  tbody tr { cursor: pointer; transition: background .1s; }
+  tbody tr:hover { background: var(--surface2); }
+  td .scope-pill, td .status-pill {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--border);
+  }
+  .scope-pill.Subscription { color: var(--sub); border-color: var(--sub); }
+  .scope-pill.ResourceGroup { color: var(--rg); border-color: var(--rg); }
+  .scope-pill.Resource { color: var(--res); border-color: var(--border); }
+  .status-pill.Compliant { color: var(--ok); border-color: var(--ok); }
+  .status-pill.Noncompliant { color: var(--danger); border-color: var(--danger); }
+  .status-pill.Untaggable { color: var(--muted); border-color: var(--border); }
+  .viol-tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--warn); color: var(--warn); margin-right: 4px; }
+  .principal-name { font-weight: 500; }
+  .principal-upn { font-size: 11px; color: var(--muted); }
+  .empty-rows { text-align: center; color: var(--muted); padding: 40px; }
+
+  /* ── pager ─────────────────────────────────────────────────── */
+  .pager { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; }
+  .pager button { padding: 5px 11px; min-width: 34px; }
+  .pager button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pager .ell { color: var(--muted); padding: 0 4px; }
+
+  /* ── per-column header filter ──────────────────────────────── */
+  th .filter-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-left: 6px; padding: 1px 3px; border-radius: 4px;
+    color: var(--muted); vertical-align: middle; cursor: pointer;
+  }
+  th .filter-icon:hover { background: var(--surface2); color: var(--text); }
+  th .filter-icon svg { width: 11px; height: 11px; fill: currentColor; }
+  th .filter-icon.active { color: var(--accent); }
+  th .filter-icon.open { background: var(--surface2); color: var(--text); }
+  th .filter-icon .filter-count {
+    margin-left: 3px; font-size: 9px; font-weight: 700; line-height: 1;
+    background: var(--accent); color: #fff; border-radius: 7px; padding: 1px 4px;
+  }
+
+  .col-filter-pop {
+    position: absolute; z-index: 200; min-width: 190px; max-width: 320px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.45);
+  }
+  .col-filter-pop .pop-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted); margin-bottom: 8px;
+  }
+  .col-filter-pop .pop-opts { max-height: 260px; overflow-y: auto; }
+  .col-filter-pop .pop-opt {
+    display: flex; align-items: center; gap: 8px; padding: 5px 4px;
+    font-size: 13px; color: var(--text); cursor: pointer; border-radius: 5px;
+    white-space: normal; text-transform: none; letter-spacing: 0;
+  }
+  .col-filter-pop .pop-opt:hover { background: var(--surface2); }
+  .col-filter-pop .pop-opt input { accent-color: var(--accent); cursor: pointer; margin: 0; }
+  .col-filter-pop .pop-empty { font-size: 12px; color: var(--muted); padding: 4px; }
+  .col-filter-pop .pop-foot {
+    display: flex; justify-content: flex-end; margin-top: 8px;
+    padding-top: 8px; border-top: 1px solid var(--border);
+  }
+  .col-filter-pop .pop-clear {
+    background: none; border: none; color: var(--accent); font-family: var(--font);
+    font-size: 12px; cursor: pointer; padding: 2px 4px;
+  }
+  .col-filter-pop .pop-clear:hover { text-decoration: underline; }
+
+  /* ── detail panel ──────────────────────────────────────────── */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 90; display: none; }
+  .overlay.open { display: block; }
+  .detail { position: fixed; top: 0; right: 0; height: 100%; width: 460px; max-width: 92vw; background: var(--surface); border-left: 1px solid var(--border); z-index: 100; transform: translateX(100%); transition: transform .2s; overflow-y: auto; }
+  .detail.open { transform: translateX(0); }
+  .detail .dhead { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+  .detail .dhead h3 { font-size: 15px; font-weight: 600; }
+  .detail .dnav { display: flex; gap: 6px; }
+  .detail .dbody { padding: 20px; }
+  .detail .drow { margin-bottom: 16px; }
+  .detail .drow .k { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 4px; }
+  .detail .drow .v { font-size: 14px; word-break: break-all; }
+  .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag-chip { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); }
+  .tag-chip .tk { color: var(--muted); }
+  .tag-empty { font-size: 12px; color: var(--muted); }
+  .viol-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  .viol-list li { background: var(--surface2); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  .viol-list li .vt { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--warn); }
+  .rec-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
+  .rec-box .ra { font-weight: 600; margin-bottom: 4px; }
+  .rec-box .rr { font-size: 13px; color: var(--muted); line-height: 1.4; }
+
+  /* ── light theme (toggled via .light on <html>) ──────────────── */
+  html.light {
+    --bg:       #f4f6fb;
+    --surface:  #ffffff;
+    --surface2: #eef1f7;
+    --border:   #d4d9e6;
+    --text:     #1c2230;
+    --muted:    #5c6679;
+    --accent:   #3a6ae0;
+  }
+  /* ── theme toggle (fixed, bottom-left) ───────────────────────── */
+  .theme-toggle {
+    position: fixed; left: 18px; bottom: 18px; z-index: 50;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 8px 14px; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    transition: border-color .15s, background .15s, color .15s;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle .ico { font-size: 15px; line-height: 1; }
+</style>
+<script>
+  // Apply the saved theme before first paint to avoid a flash of the wrong theme.
+  (function () {
+    try { if (localStorage.getItem('azureHub.theme') === 'light') document.documentElement.classList.add('light'); } catch (e) {}
+  })();
+</script>
+</head>
+<body class="needs-data">
+
+<header>
+  <span class="logo">🏷️</span>
+  <div>
+    <div class="crumbs"><a href="/">Azure Engineering</a> › Tag Auditor</div>
+    <h1>Tag Auditor</h1>
+  </div>
+  <div class="header-actions">
+    <button id="refreshBtn" class="ghost" onclick="loadResults(true)" title="Reload last scan">↻</button>
+    <button id="scanBtn" class="primary" onclick="startScan()">Run Scan</button>
+    <button id="cancelBtn" class="ghost" onclick="cancelScan()" style="display:none;">Cancel</button>
+  </div>
+</header>
+
+<main>
+  <!-- empty state -->
+  <div class="empty">
+    <div class="big">🏷️</div>
+    <h2>No tag compliance scan yet</h2>
+    <p>Audit tag usage across every subscription, resource group, and resource in your tenant.
+       Define the tag keys your organization requires in the <b>⚙ Tag rules</b> panel below, then run a scan to
+       find objects missing required tags, with blank or invalid values, or inconsistent key casing.</p>
+    <button class="primary" onclick="startScan()">Run your first scan</button>
+  </div>
+
+  <!-- progress -->
+  <div class="scan-banner" id="scanBanner">
+    <div class="top">
+      <span class="phase" id="scanPhase">Starting…</span>
+      <span class="pct" id="scanPct">0%</span>
+    </div>
+    <div class="bar"><i id="scanBar"></i></div>
+    <div class="scan-log" id="scanLog"></div>
+  </div>
+
+  <!-- summary cards (hidden until a scan completes) -->
+  <div class="cards">
+    <div class="card"><div class="card-label">Total Objects</div><div class="card-value" id="cTotal">—</div><div class="card-sub" id="cTotalSub"></div></div>
+    <div class="card sub"><div class="card-label">Subscriptions</div><div class="card-value" id="cSubs">—</div><div class="card-sub">scopes</div></div>
+    <div class="card rg"><div class="card-label">Resource Groups</div><div class="card-value" id="cRgs">—</div><div class="card-sub">scopes</div></div>
+    <div class="card"><div class="card-label">Resources</div><div class="card-value" id="cResources">—</div><div class="card-sub">scanned</div></div>
+    <div class="card ok"><div class="card-label">Compliant</div><div class="card-value" id="cCompliant">—</div><div class="card-sub" id="cCompliantSub">of scored</div></div>
+    <div class="card flagged"><div class="card-label">Non-compliant</div><div class="card-value" id="cNonCompliant">—</div><div class="card-sub">missing/invalid tags</div></div>
+  </div>
+
+  <!-- tag rules (full-width, always visible) -->
+  <section class="tag-rules">
+    <div class="tr-head">
+      <h3>⚙ Tag rules</h3>
+      <div class="hint">Objects are evaluated against these rules. Changes are saved automatically and applied on the next scan.</div>
+    </div>
+    <div class="tr-grid">
+      <div class="field">
+        <label class="lbl">Required tag keys</label>
+        <textarea id="requiredTags" rows="3" placeholder="Environment, Owner, CostCenter" oninput="saveRules()"></textarea>
+        <div class="hint">Comma- or newline-separated. Objects missing any of these keys (or with a blank/mis-cased key) are flagged.</div>
+      </div>
+      <div class="field">
+        <label class="lbl">Allowed values (optional)</label>
+        <textarea id="allowedValues" rows="3" placeholder="Environment=Prod,Dev,Test&#10;CostCenter=CC100,CC200" oninput="saveRules()"></textarea>
+        <div class="hint">One key per line: <code>Key=val1,val2</code>. A required key whose value isn't listed is flagged as invalid.</div>
+      </div>
+    </div>
+    <div class="tr-opts">
+      <div class="field">
+        <label class="lbl">Management group</label>
+        <select id="managementGroupId" onmousedown="loadManagementGroups()" onchange="saveRules()">
+          <option value="">Whole tenant (all subscriptions)</option>
+        </select>
+        <div class="hint">Leave on “Whole tenant” to scan every accessible subscription, or pick a management group to recurse just its hierarchy (all child groups + subscriptions). The list loads from your tenant when you open it.</div>
+      </div>
+      <div class="field">
+        <label class="lbl">Result mode</label>
+        <select id="resultMode" onchange="onModeChange()">
+          <option value="exclusive">Exclusive — objects in violation (missing the tags)</option>
+          <option value="inclusive">Inclusive — objects that carry the tags</option>
+        </select>
+        <div class="hint">Exclusive surfaces non-compliant objects to fix; inclusive surfaces objects that already have the required tags. Switches instantly — no rescan needed.</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="has-data">
+    <!-- heatmap (objects in violation, by scope) -->
+    <div class="heatmap-wrap" id="heatmapWrap" hidden>
+      <h3 id="heatTitle">Objects in violation</h3>
+      <div class="hint" id="heatHint">Non-compliant objects by scope. Click a tile to filter the table to that scope.</div>
+      <div class="heatmap" id="heatmap"></div>
+    </div>
+
+    <!-- toolbar -->
+    <div class="toolbar">
+      <input type="text" id="search" placeholder="Search name, id, type, subscription…" oninput="onFilterChange()" />
+      <label class="toggle"><input type="checkbox" id="nonCompliantOnly" onchange="onFilterChange()"> <span id="focusToggleLabel">In violation only</span></label>
+      <span class="spacer"></span>
+      <span class="filter-summary" id="filterSummary"></span>
+      <button class="ghost" id="clearBtn" onclick="clearFilters()" style="display:none;">Clear</button>
+      <button class="col-btn export-btn" onclick="exportCsv()" id="exportBtn">⬇ Export CSV</button>
+    </div>
+
+    <!-- table -->
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-col="Name" onclick="sortBy('Name')">Name</th>
+            <th data-col="scope" onclick="sortBy('ScopeType')">Scope</th>
+            <th data-col="subscription" onclick="sortBy('SubscriptionName')">Subscription</th>
+            <th data-col="resourceType" onclick="sortBy('ResourceType')">Type</th>
+            <th data-col="violationType" onclick="sortBy('ComplianceState')">Violations</th>
+            <th data-col="status" onclick="sortBy('ComplianceState')">Status</th>
+            <th data-col="recommendation" onclick="sortBy('RecommendedAction')">Recommendation</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="pager" id="pager"></div>
+  </div>
+
+  <!-- column-filter popover (anchored to the clicked header icon) -->
+  <div id="colFilterPop" class="col-filter-pop" hidden></div>
+</main>
+
+<!-- detail panel -->
+<div class="overlay" id="overlay" onclick="closeDetail()"></div>
+<aside class="detail" id="detail">
+  <div class="dhead">
+    <h3 id="dTitle">Object</h3>
+    <div class="dnav">
+      <button class="ghost" onclick="navDetail(-1)" title="Previous (←)">‹</button>
+      <button class="ghost" onclick="navDetail(1)" title="Next (→)">›</button>
+      <button class="ghost" onclick="closeDetail()" title="Close (Esc)">✕</button>
+    </div>
+  </div>
+  <div class="dbody" id="dBody"></div>
+</aside>
+
+<script>
+/* ── state ──────────────────────────────────────────────────── */
+let allData = [];        // all object rows
+let meta = null;
+let sortKey = 'ScopeType', sortDir = 1;
+let heatFilter = null;   // { scope: 'Subscription'|'ResourceGroup'|'Resource' }
+let resultMode = 'exclusive';  // 'exclusive' = focus objects in violation; 'inclusive' = focus objects that carry the tags
+let currentPage = 1, pageSize = 12;
+
+/* The compliance state the current mode focuses on (drives heatmap, heat filter,
+   and the toolbar "only" toggle). */
+function focusState() { return resultMode === 'inclusive' ? 'Compliant' : 'Non-compliant'; }
+
+/* Re-label the heatmap heading + toolbar toggle to match the active result mode. */
+function applyModeLabels() {
+  const incl = resultMode === 'inclusive';
+  const t = document.getElementById('heatTitle');
+  const h = document.getElementById('heatHint');
+  const f = document.getElementById('focusToggleLabel');
+  if (t) t.textContent = incl ? 'Objects with required tags' : 'Objects in violation';
+  if (h) h.textContent = incl
+    ? 'Objects that already carry the required tags, by scope. Click a tile to filter the table to that scope.'
+    : 'Non-compliant objects by scope. Click a tile to filter the table to that scope.';
+  if (f) f.textContent = incl ? 'With required tags only' : 'In violation only';
+}
+let detailRows = [], detailIndex = -1;
+let pollTimer = null;
+
+const COLS = [
+  { key: 'Name',              label: 'Name' },
+  { key: 'ScopeType',         label: 'Scope' },
+  { key: 'SubscriptionName',  label: 'Subscription' },
+  { key: 'ResourceType',      label: 'Type' },
+  { key: 'Violations',        label: 'Violations' },
+  { key: 'ComplianceState',   label: 'Status' },
+  { key: 'RecommendedAction', label: 'Recommendation' },
+];
+
+const VIOLATION_TYPES = [
+  ['missing', 'Missing keys'], ['empty', 'Empty values'],
+  ['invalid', 'Invalid values'], ['drift', 'Casing drift'],
+];
+
+/* Per-column header filters, keyed by the th's data-col. `options` lists [value,label]
+   choices; `dynamic` derives choices from the data. `accessor` maps a row to the value
+   to match; `match` is a custom predicate. Each filter is multi-select. */
+const COL_FILTERS = {
+  scope: {
+    options: [['Subscription', 'Subscriptions'], ['ResourceGroup', 'Resource groups'], ['Resource', 'Resources']],
+    accessor: r => r.ScopeType,
+  },
+  subscription: {
+    dynamic: true,
+    accessor: r => r.SubscriptionName || '',
+  },
+  resourceType: {
+    dynamic: true,
+    accessor: r => r.ResourceType || '',
+  },
+  violationType: {
+    options: VIOLATION_TYPES,
+    match: (r, vals) => vals.some(v => asArray(r.Violations).some(x => x && x.Type === v)),
+  },
+  status: {
+    options: [['Compliant', '✓ Compliant'], ['Non-compliant', '⚠ Non-compliant'], ['Untaggable', 'Untaggable']],
+    accessor: r => r.ComplianceState,
+  },
+};
+let colFilters = {};
+
+/* Toggle one value within a column's multi-select filter. */
+function toggleColValue(key, value, checked) {
+  const set = new Set(colFilters[key] || []);
+  if (checked) set.add(value); else set.delete(value);
+  if (set.size) colFilters[key] = [...set]; else delete colFilters[key];
+  currentPage = 1;
+  setupColFilterIcons();
+  renderTable();
+}
+
+function clearColFilter(key) {
+  delete colFilters[key];
+  currentPage = 1;
+  closeColFilter();
+  renderTable();
+}
+
+const FUNNEL_SVG = '<svg viewBox="0 0 16 16"><path d="M1 2h14l-5.4 6.4v4.2l-3.2 1.6V8.4z"/></svg>';
+
+/* [value, label] choices for a column's filter. */
+function colFilterChoices(key) {
+  const f = COL_FILTERS[key];
+  if (f.dynamic) {
+    const accessor = f.accessor || (r => r[key]);
+    return [...new Set(allData.map(accessor).filter(Boolean))].sort().map(v => [v, v]);
+  }
+  return f.options;
+}
+
+/* Inject/update funnel icons into the static table headers (idempotent). */
+function setupColFilterIcons() {
+  Object.keys(COL_FILTERS).forEach(key => {
+    const th = document.querySelector(`thead th[data-col="${key}"]`);
+    if (!th) return;
+    let icon = th.querySelector('.filter-icon');
+    if (!icon) {
+      icon = document.createElement('span');
+      icon.title = 'Filter';
+      icon.addEventListener('click', e => toggleColFilter(e, key));
+      th.appendChild(icon);
+    }
+    const sel = colFilters[key] || [];
+    icon.className = 'filter-icon' + (sel.length ? ' active' : '') + (openFilterKey === key ? ' open' : '');
+    icon.innerHTML = FUNNEL_SVG + (sel.length ? `<span class="filter-count">${sel.length}</span>` : '');
+  });
+}
+
+/* Open/close the filter popover anchored under a header's funnel icon. */
+let openFilterKey = null;
+function toggleColFilter(evt, key) {
+  evt.stopPropagation();   // don't trigger the header's sort handler
+  if (openFilterKey === key) { closeColFilter(); return; }
+  const pop = document.getElementById('colFilterPop');
+  const th = document.querySelector(`thead th[data-col="${key}"]`);
+  const label = th ? th.childNodes[0].textContent.trim() : '';
+  const sel = new Set(colFilters[key] || []);
+  const choices = colFilterChoices(key);
+  const rows = choices.length
+    ? choices.map(([v, l]) =>
+        `<label class="pop-opt"><input type="checkbox" value="${esc(v)}"${sel.has(v) ? ' checked' : ''}` +
+        ` onchange="toggleColValue('${key}', this.value, this.checked)"><span>${esc(l)}</span></label>`).join('')
+    : '<div class="pop-empty">No values</div>';
+  pop.innerHTML =
+    `<div class="pop-label">Filter by ${esc(label)}</div>` +
+    `<div class="pop-opts">${rows}</div>` +
+    `<div class="pop-foot"><button type="button" class="pop-clear" onclick="clearColFilter('${key}')">Clear</button></div>`;
+  pop.hidden = false;
+  const rect = evt.currentTarget.getBoundingClientRect();
+  const popW = pop.offsetWidth;
+  let left = rect.left + window.scrollX;
+  left = Math.min(left, window.scrollX + document.documentElement.clientWidth - popW - 8);
+  pop.style.left = Math.max(8, left) + 'px';
+  pop.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+  openFilterKey = key;
+  setupColFilterIcons();
+}
+function closeColFilter() {
+  const pop = document.getElementById('colFilterPop');
+  if (pop) { pop.hidden = true; pop.innerHTML = ''; }
+  if (openFilterKey !== null) { openFilterKey = null; setupColFilterIcons(); }
+}
+document.addEventListener('click', e => {
+  if (openFilterKey === null) return;
+  const pop = document.getElementById('colFilterPop');
+  if (pop && !pop.contains(e.target) && !e.target.closest('.filter-icon')) closeColFilter();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeColFilter(); });
+
+/* ConvertTo-Json collapses single-element arrays to a scalar. */
+function asArray(v) { return Array.isArray(v) ? v : (v == null ? [] : [v]); }
+
+/* A tag map arrives as an object (key->value); turn it into [key,value] pairs. */
+function tagEntries(tags) {
+  if (!tags || typeof tags !== 'object') return [];
+  return Object.entries(tags);
+}
+
+/* ── init ───────────────────────────────────────────────────── */
+loadRules();
+loadResults(false);
+
+/* ── tag rules ──────────────────────────────────────────────── */
+/* Persist/restore the rules inputs so the page remembers them between visits. */
+function loadRules() {
+  try {
+    const raw = localStorage.getItem('tagCompliance.rules');
+    if (!raw) return;
+    const r = JSON.parse(raw);
+    if (r.requiredTags) document.getElementById('requiredTags').value = r.requiredTags;
+    if (r.allowedValues) document.getElementById('allowedValues').value = r.allowedValues;
+    if (r.managementGroupId) selectManagementGroup(r.managementGroupId);
+    if (r.resultMode === 'inclusive' || r.resultMode === 'exclusive') {
+      resultMode = r.resultMode;
+      document.getElementById('resultMode').value = r.resultMode;
+    }
+  } catch {}
+  applyModeLabels();
+}
+function saveRules() {
+  try {
+    localStorage.setItem('tagCompliance.rules', JSON.stringify({
+      requiredTags: document.getElementById('requiredTags').value,
+      allowedValues: document.getElementById('allowedValues').value,
+      managementGroupId: document.getElementById('managementGroupId').value,
+      resultMode: resultMode,
+    }));
+  } catch {}
+}
+
+/* Select a management group by id, adding a placeholder option if the live list
+   hasn't loaded yet (so a restored/persisted choice still shows). */
+function selectManagementGroup(id) {
+  const sel = document.getElementById('managementGroupId');
+  if (!id) { sel.value = ''; return; }
+  if (![...sel.options].some(o => o.value === id)) {
+    sel.insertAdjacentHTML('beforeend', `<option value="${esc(id)}">${esc(id)}</option>`);
+  }
+  sel.value = id;
+}
+
+/* Populate the management-group dropdown from the tenant, once, when first opened.
+   No-op (whole-tenant only) when the API is unreachable (e.g. static preview). */
+let mgLoaded = false, mgLoading = false;
+async function loadManagementGroups() {
+  if (mgLoaded || mgLoading) return;
+  mgLoading = true;
+  try {
+    const r = await fetch('/api/tags/managementgroups');
+    if (r.ok) {
+      const list = asArray((await r.json()).managementGroups);
+      const sel = document.getElementById('managementGroupId');
+      const current = sel.value;
+      sel.innerHTML = '<option value="">Whole tenant (all subscriptions)</option>' +
+        list.map(m => `<option value="${esc(m.Name)}">${esc(m.DisplayName || m.Name)}</option>`).join('');
+      selectManagementGroup(current);
+      mgLoaded = true;
+    }
+  } catch { /* leave whole-tenant default */ }
+  mgLoading = false;
+}
+
+/* Result-mode change: re-focus the heatmap/table without a rescan. */
+function onModeChange() {
+  resultMode = document.getElementById('resultMode').value === 'inclusive' ? 'inclusive' : 'exclusive';
+  saveRules();
+  applyModeLabels();
+  if (!document.body.classList.contains('needs-data')) {
+    currentPage = 1;
+    buildHeatmap();
+    renderTable();
+  }
+}
+
+/* Parse the required-keys textarea into a clean string array. */
+function parseRequiredTags() {
+  return document.getElementById('requiredTags').value
+    .split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+}
+/* Parse the allowed-values textarea (lines of `Key=v1,v2`) into an object. */
+function parseAllowedValues() {
+  const out = {};
+  document.getElementById('allowedValues').value.split(/\n+/).forEach(line => {
+    const eq = line.indexOf('=');
+    if (eq < 0) return;
+    const key = line.slice(0, eq).trim();
+    const vals = line.slice(eq + 1).split(',').map(s => s.trim()).filter(Boolean);
+    if (key && vals.length) out[key] = vals;
+  });
+  return out;
+}
+
+/* ── scan lifecycle ─────────────────────────────────────────── */
+async function startScan() {
+  const requiredTags = parseRequiredTags();
+  if (!requiredTags.length) {
+    alert('Enter at least one required tag key under ⚙ Tag rules before scanning.');
+    document.getElementById('requiredTags').focus();
+    return;
+  }
+  saveRules();
+  const body = {
+    requiredTags,
+    allowedValues: parseAllowedValues(),
+    mode: resultMode === 'inclusive' ? 'Inclusive' : 'Exclusive',
+  };
+  const mg = document.getElementById('managementGroupId').value.trim();
+  if (mg) body.managementGroupId = mg;
+  try {
+    const r = await fetch('/api/tags/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (r.status === 409) { alert('A scan is already running.'); return; }
+    setScanning(true);
+    pollStatus();
+  } catch { alert('Could not reach the dashboard server. Is Start-Dashboard.ps1 running?'); }
+}
+
+async function cancelScan() {
+  try { await fetch('/api/tags/scan/cancel', { method: 'POST' }); } catch {}
+}
+
+function setScanning(on) {
+  document.getElementById('scanBtn').disabled = on;
+  document.getElementById('cancelBtn').style.display = on ? '' : 'none';
+  document.getElementById('scanBanner').classList.toggle('active', on);
+}
+
+async function pollStatus() {
+  if (pollTimer) clearTimeout(pollTimer);
+  try {
+    const r = await fetch('/api/tags/status');
+    const s = await r.json();
+    const prog = s.Progress;
+    if (prog) {
+      document.getElementById('scanPhase').textContent =
+        prog.Message || (prog.Phase === 'done' ? 'Finishing…' : 'Scanning…');
+      document.getElementById('scanPct').textContent = (prog.Percent ?? 0) + '%';
+      document.getElementById('scanBar').style.width = (prog.Percent ?? 0) + '%';
+      const log = asArray(prog.LogTail);
+      document.getElementById('scanLog').innerHTML = log.map(l => `<div>${esc(l)}</div>`).join('');
+    }
+    if (s.State === 'running') {
+      pollTimer = setTimeout(pollStatus, 1200);
+    } else {
+      setScanning(false);
+      if (s.State === 'failed') {
+        document.getElementById('scanPhase').textContent = 'Scan failed: ' + (s.Message || 'unknown error');
+        document.getElementById('scanBanner').classList.add('active');
+      } else if (s.State === 'cancelled') {
+        setScanning(false);
+      } else {
+        await loadResults(false);
+      }
+    }
+  } catch {
+    pollTimer = setTimeout(pollStatus, 2000);
+  }
+}
+
+/* ── load + render ──────────────────────────────────────────── */
+async function loadResults(userInitiated) {
+  try {
+    const r = await fetch('/api/tags/results');
+    if (!r.ok) return;
+    const json = await r.json();
+    applyData(json);
+  } catch { /* leave empty state */ }
+}
+
+function applyData(json) {
+  meta = json.ScanMetadata || null;
+  allData = asArray(json.Objects);
+  if (!meta || !allData.length) {
+    document.body.classList.add('needs-data');
+    return;
+  }
+  document.body.classList.remove('needs-data');
+
+  // restore the rules that were actually scanned, if present
+  if (meta.RequiredTags && asArray(meta.RequiredTags).length) {
+    document.getElementById('requiredTags').value = asArray(meta.RequiredTags).join(', ');
+  }
+  if (meta.Mode) {
+    resultMode = String(meta.Mode).toLowerCase() === 'inclusive' ? 'inclusive' : 'exclusive';
+    document.getElementById('resultMode').value = resultMode;
+  }
+  if (meta.ManagementGroupId) selectManagementGroup(meta.ManagementGroupId);
+  applyModeLabels();
+
+  setupColFilterIcons();
+  updateCards();
+  buildHeatmap();
+  currentPage = 1;
+  renderTable();
+}
+
+function updateCards() {
+  document.getElementById('cTotal').textContent     = meta.TotalObjects ?? allData.length;
+  document.getElementById('cSubs').textContent      = meta.Subscriptions ?? '—';
+  document.getElementById('cRgs').textContent       = meta.ResourceGroups ?? '—';
+  document.getElementById('cResources').textContent = meta.Resources ?? '—';
+  document.getElementById('cCompliant').textContent = (meta.CompliancePercent ?? 0) + '%';
+  document.getElementById('cNonCompliant').textContent = meta.NonCompliantCount ?? '—';
+  const when = meta.ScanTime ? new Date(meta.ScanTime) : null;
+  document.getElementById('cTotalSub').textContent = when ? when.toLocaleString() : '';
+  document.getElementById('cCompliantSub').textContent = `${meta.CompliantCount ?? 0} of ${(meta.CompliantCount ?? 0) + (meta.NonCompliantCount ?? 0)} scored`;
+}
+
+/* heatmap: count of non-compliant objects per scope. One tile each for subscriptions,
+   resource groups, and resources; redness scales with the count relative to the busiest
+   tile. Clicking a tile filters the table to the non-compliant objects of that scope. */
+const HEAT_CATEGORIES = [
+  { scope: 'Subscription',  label: 'Subscriptions',   meta: 'in violation' },
+  { scope: 'ResourceGroup', label: 'Resource groups', meta: 'in violation' },
+  { scope: 'Resource',      label: 'Resources',       meta: 'in violation' },
+];
+
+function buildHeatmap() {
+  const incl = resultMode === 'inclusive';
+  const focus = focusState();
+  const metaLabel = incl ? 'with tags' : 'in violation';
+  const rgb = incl ? '90,200,140' : '240,106,106';
+  const counts = {};
+  const totals = {};
+  HEAT_CATEGORIES.forEach(c => { counts[c.scope] = 0; totals[c.scope] = 0; });
+  allData.forEach(r => {
+    if (!(r.ScopeType in totals)) return;
+    totals[r.ScopeType]++;
+    if (r.ComplianceState === focus) counts[r.ScopeType]++;
+  });
+  const max = Math.max(1, ...HEAT_CATEGORIES.map(c => counts[c.scope]));
+  const wrap = document.getElementById('heatmapWrap');
+  wrap.hidden = false;
+  document.getElementById('heatmap').innerHTML = HEAT_CATEGORIES.map(c => {
+    const n = counts[c.scope];
+    const intensity = 0.12 + 0.55 * (n / max);
+    const active = heatFilter && heatFilter.scope === c.scope ? ' active' : '';
+    return `<div class="heat-cell${active}" style="background:rgba(${rgb},${intensity.toFixed(2)})"
+                 onclick="toggleHeat('${c.scope}')">
+      <div class="hc-name" title="${esc(c.label)}">${esc(c.label)}</div>
+      <div class="hc-count">${n}</div>
+      <div class="hc-meta">${metaLabel} · of ${totals[c.scope]}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleHeat(scope) {
+  heatFilter = (heatFilter && heatFilter.scope === scope) ? null : { scope };
+  currentPage = 1;
+  buildHeatmap();
+  renderTable();
+}
+
+/* ── filtering ──────────────────────────────────────────────── */
+function getFilteredRows() {
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  const focusOnly = document.getElementById('nonCompliantOnly').checked;
+  const focus = focusState();
+  const colEntries = Object.entries(colFilters).filter(([, v]) => v && v.length);
+
+  let rows = allData.filter(r => {
+    if (focusOnly && r.ComplianceState !== focus) return false;
+    if (heatFilter && !(r.ScopeType === heatFilter.scope && r.ComplianceState === focus)) return false;
+    for (const [key, vals] of colEntries) {
+      const f = COL_FILTERS[key];
+      if (f.match ? !f.match(r, vals) : !vals.includes(f.accessor(r))) return false;
+    }
+    if (q) {
+      const hay = [r.Name, r.Id, r.ResourceType, r.SubscriptionName, r.ResourceGroup].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  rows.sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (sortKey === 'RecommendedAction') { av = a.RecommendedAction?.Action; bv = b.RecommendedAction?.Action; }
+    av = (av ?? '').toString().toLowerCase();
+    bv = (bv ?? '').toString().toLowerCase();
+    return av < bv ? -sortDir : av > bv ? sortDir : 0;
+  });
+  return rows;
+}
+
+function onFilterChange() { currentPage = 1; renderTable(); }
+
+function filtersActive() {
+  return document.getElementById('search').value ||
+         document.getElementById('nonCompliantOnly').checked ||
+         heatFilter || Object.keys(colFilters).length;
+}
+
+function clearFilters() {
+  document.getElementById('search').value = '';
+  document.getElementById('nonCompliantOnly').checked = false;
+  colFilters = {};
+  heatFilter = null;
+  currentPage = 1;
+  closeColFilter();
+  setupColFilterIcons();
+  buildHeatmap();
+  renderTable();
+}
+
+function sortBy(key) {
+  if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; }
+  updateSortIndicators();
+  renderTable();
+}
+
+function updateSortIndicators() {
+  document.querySelectorAll('thead th[data-col]').forEach(th => {
+    let ind = th.querySelector('.sort-indicator');
+    if (!ind) { ind = document.createElement('span'); ind.className = 'sort-indicator'; th.insertBefore(ind, th.querySelector('.filter-icon')); }
+    const key = th.getAttribute('onclick').match(/sortBy\('([^']+)'\)/)[1];
+    ind.textContent = sortKey === key ? (sortDir > 0 ? ' ▲' : ' ▼') : '';
+  });
+}
+
+/* ── render table ───────────────────────────────────────────── */
+function computePageSize() {
+  const wrap = document.querySelector('.table-wrap');
+  const top = wrap ? wrap.getBoundingClientRect().top : 400;
+  return Math.max(6, Math.floor((window.innerHeight - top - 96 - 42) / 44));
+}
+
+function violationSummary(r) {
+  const m = asArray(r.MissingKeys).length;
+  const e = asArray(r.EmptyValueKeys).length;
+  const iv = asArray(r.InvalidValueKeys).length;
+  const d = asArray(r.CaseDriftKeys).length;
+  const tags = [];
+  if (m)  tags.push(`<span class="viol-tag">${m} missing</span>`);
+  if (e)  tags.push(`<span class="viol-tag">${e} empty</span>`);
+  if (iv) tags.push(`<span class="viol-tag">${iv} invalid</span>`);
+  if (d)  tags.push(`<span class="viol-tag">${d} drift</span>`);
+  return tags.length ? tags.join('') : '<span style="color:var(--muted)">—</span>';
+}
+
+function statusPill(state) {
+  const cls = state === 'Non-compliant' ? 'Noncompliant' : (state === 'Compliant' ? 'Compliant' : 'Untaggable');
+  const label = state === 'Non-compliant' ? '⚠ Non-compliant' : (state === 'Compliant' ? '✓ Compliant' : 'Untaggable');
+  return `<span class="status-pill ${cls}">${label}</span>`;
+}
+
+function renderTable() {
+  pageSize = computePageSize();
+  const rows = getFilteredRows();
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  if (currentPage > totalPages) currentPage = totalPages;
+  const start = (currentPage - 1) * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
+  detailRows = rows;
+
+  const tbody = document.getElementById('tbody');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="${COLS.length}" class="empty-rows">No objects match the current filters.</td></tr>`;
+  } else {
+    tbody.innerHTML = pageRows.map((r, li) => {
+      const i = start + li;
+      const rec = r.RecommendedAction || {};
+      const sub = r.ResourceGroup ? r.ResourceGroup : '';
+      return `<tr onclick="openDetail(${i})">
+        <td><span class="principal-name">${esc(r.Name || '(no name)')}</span>
+            ${sub ? `<div class="principal-upn">${esc(sub)}</div>` : ''}</td>
+        <td><span class="scope-pill ${esc(r.ScopeType)}">${esc(r.ScopeType)}</span></td>
+        <td>${esc(r.SubscriptionName || '—')}</td>
+        <td>${esc(r.ResourceType || '—')}</td>
+        <td>${violationSummary(r)}</td>
+        <td>${statusPill(r.ComplianceState)}</td>
+        <td>${esc(rec.Action || '—')}</td>
+      </tr>`;
+    }).join('');
+  }
+  updateFilterSummary(rows.length, start, pageRows.length);
+  renderPager(totalPages);
+}
+
+function updateFilterSummary(total, start, shown) {
+  document.getElementById('clearBtn').style.display = filtersActive() ? '' : 'none';
+  document.getElementById('exportBtn').textContent = `⬇ Export CSV (${total})`;
+  if (!total) { document.getElementById('filterSummary').textContent = ''; return; }
+  document.getElementById('filterSummary').textContent =
+    `Showing ${start + 1}–${start + shown} of ${total}`;
+}
+
+function renderPager(totalPages) {
+  const pager = document.getElementById('pager');
+  if (totalPages <= 1) { pager.innerHTML = ''; return; }
+  let html = `<button onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>‹</button>`;
+  const pages = pageList(currentPage, totalPages);
+  pages.forEach(p => {
+    if (p === '…') html += `<span class="ell">…</span>`;
+    else html += `<button class="${p === currentPage ? 'active' : ''}" onclick="goToPage(${p})">${p}</button>`;
+  });
+  html += `<button onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>›</button>`;
+  pager.innerHTML = html;
+}
+
+function pageList(cur, total) {
+  const out = [];
+  const add = n => out.push(n);
+  if (total <= 7) { for (let i = 1; i <= total; i++) add(i); return out; }
+  add(1);
+  if (cur > 3) out.push('…');
+  for (let i = Math.max(2, cur - 1); i <= Math.min(total - 1, cur + 1); i++) add(i);
+  if (cur < total - 2) out.push('…');
+  add(total);
+  return out;
+}
+
+function goToPage(p) {
+  const total = Math.max(1, Math.ceil(getFilteredRows().length / pageSize));
+  currentPage = Math.min(Math.max(1, p), total);
+  renderTable();
+}
+
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (!document.body.classList.contains('needs-data')) renderTable(); }, 200);
+});
+
+/* ── detail panel ───────────────────────────────────────────── */
+function openDetail(i) {
+  detailIndex = i;
+  renderDetail();
+  document.getElementById('overlay').classList.add('open');
+  document.getElementById('detail').classList.add('open');
+}
+function closeDetail() {
+  document.getElementById('overlay').classList.remove('open');
+  document.getElementById('detail').classList.remove('open');
+  detailIndex = -1;
+}
+function navDetail(delta) {
+  if (detailIndex < 0) return;
+  const ni = detailIndex + delta;
+  if (ni < 0 || ni >= detailRows.length) return;
+  detailIndex = ni;
+  currentPage = Math.floor(ni / pageSize) + 1;
+  renderTable();
+  renderDetail();
+}
+
+function renderTagList(tags) {
+  const entries = tagEntries(tags);
+  if (!entries.length) return '<span class="tag-empty">No tags</span>';
+  return `<div class="tag-list">${entries.map(([k, v]) =>
+    `<span class="tag-chip"><span class="tk">${esc(k)}</span> = ${esc(v || '∅')}</span>`).join('')}</div>`;
+}
+
+function renderDetail() {
+  const r = detailRows[detailIndex];
+  if (!r) return;
+  document.getElementById('dTitle').textContent = r.Name || '(no name)';
+  const rec = r.RecommendedAction || {};
+  const field = (k, v) => `<div class="drow"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  const violations = asArray(r.Violations);
+  const violHtml = violations.length
+    ? `<ul class="viol-list">${violations.map(v =>
+        `<li><div class="vt">${esc(v.Type)}</div>${esc(v.Detail || '')}</li>`).join('')}</ul>`
+    : '<span class="tag-empty">No violations</span>';
+
+  document.getElementById('dBody').innerHTML =
+    field('Name', `${esc(r.Name || '(no name)')}<span class="scope-pill ${esc(r.ScopeType)}" style="margin-left:8px;">${esc(r.ScopeType)}</span>`) +
+    field('Status', statusPill(r.ComplianceState)) +
+    field('Subscription', esc(r.SubscriptionName || '—')) +
+    (r.ResourceGroup ? field('Resource group', esc(r.ResourceGroup)) : '') +
+    (r.ResourceType ? field('Resource type', esc(r.ResourceType)) : '') +
+    (r.Location ? field('Location', esc(r.Location)) : '') +
+    field('Resource ID', `<code style="font-size:11px;">${esc(r.Id || '—')}</code>`) +
+    field('Direct tags', renderTagList(r.DirectTags)) +
+    field('Effective tags (incl. inherited)', renderTagList(r.EffectiveTags)) +
+    field('Violations', violHtml) +
+    field('Recommendation', `<div class="rec-box"><div class="ra">${esc(rec.Action || '—')}</div><div class="rr">${esc(rec.Reason || '')}</div></div>`);
+}
+
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('detail').classList.contains('open')) return;
+  if (e.key === 'Escape') closeDetail();
+  else if (e.key === 'ArrowLeft') navDetail(-1);
+  else if (e.key === 'ArrowRight') navDetail(1);
+});
+
+/* ── CSV export ─────────────────────────────────────────────── */
+function exportCsv() {
+  const rows = getFilteredRows();
+  if (!rows.length) { alert('No rows to export.'); return; }
+  const headers = ['ScopeType', 'Name', 'Id', 'Subscription', 'ResourceGroup', 'ResourceType', 'Location',
+                   'MissingKeys', 'EmptyValueKeys', 'InvalidValueKeys', 'CaseDriftKeys',
+                   'ComplianceState', 'RecommendedAction', 'Reason'];
+  const cell = v => {
+    let s = (v ?? '').toString();
+    // CSV formula-injection guard: a cell that a spreadsheet would treat as a
+    // formula (leading = + - @, tab or CR) gets prefixed with a single quote so
+    // Excel/Sheets render it as text instead of executing it.
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.join(',')];
+  rows.forEach(r => {
+    const rec = r.RecommendedAction || {};
+    const drift = asArray(r.CaseDriftKeys).map(d => `${d.Found}→${d.Expected}`).join('; ');
+    lines.push([r.ScopeType, r.Name, r.Id, r.SubscriptionName, r.ResourceGroup, r.ResourceType, r.Location,
+      asArray(r.MissingKeys).join('; '), asArray(r.EmptyValueKeys).join('; '),
+      asArray(r.InvalidValueKeys).join('; '), drift,
+      r.ComplianceState, rec.Action, rec.Reason].map(cell).join(','));
+  });
+  const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `tag-compliance-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ── util ───────────────────────────────────────────────────── */
+function esc(s) {
+  return (s ?? '').toString().replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+</script>
+
+<button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">
+  <span class="ico" id="themeIco">🌙</span><span id="themeLabel">Dark</span>
+</button>
+<script>
+  function applyThemeButton() {
+    const light = document.documentElement.classList.contains('light');
+    document.getElementById('themeIco').textContent = light ? '☀️' : '🌙';
+    document.getElementById('themeLabel').textContent = light ? 'Light' : 'Dark';
+  }
+  function toggleTheme() {
+    const light = document.documentElement.classList.toggle('light');
+    try { localStorage.setItem('azureHub.theme', light ? 'light' : 'dark'); } catch (e) {}
+    applyThemeButton();
+  }
+  applyThemeButton();
+</script>
+</body>
+</html>

@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Privileged Access Scanner</title>
+<style>
+  :root {
+    --bg:        #0f1117;
+    --surface:   #1a1d27;
+    --surface2:  #222535;
+    --border:    #2e3250;
+    --text:      #e2e8f0;
+    --muted:     #8892a4;
+    --accent:    #4f81f7;
+    --danger:    #f06a6a;
+    --warn:      #f5a623;
+    --ok:        #52c78f;
+    --user:      #b47fe8;
+    --sp:        #5bc0de;
+    --radius:    8px;
+    --font:      "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; min-height: 100vh; }
+  a { color: inherit; }
+
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 14px 28px; display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .logo { font-size: 22px; }
+  .crumbs { font-size: 12px; color: var(--muted); }
+  .crumbs a { color: var(--muted); text-decoration: none; }
+  .crumbs a:hover { color: var(--accent); }
+  h1 { font-size: 17px; font-weight: 600; letter-spacing: -.2px; }
+  .header-meta { font-size: 12px; color: var(--muted); }
+  .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; position: relative; }
+
+  button {
+    font-family: var(--font); font-size: 13px; cursor: pointer;
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 13px; transition: border-color .15s, background .15s;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { background: #3f6fe0; }
+  button.ghost { background: transparent; }
+
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 28px 60px; }
+
+  /* ── empty state ───────────────────────────────────────────── */
+  .empty {
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 70px 20px; gap: 14px;
+  }
+  body.needs-data .empty { display: flex; }
+  body.needs-data .has-data { display: none !important; }
+  .empty .big { font-size: 46px; }
+  .empty h2 { font-size: 20px; font-weight: 700; }
+  .empty p { color: var(--muted); max-width: 460px; line-height: 1.5; }
+
+  /* ── progress ──────────────────────────────────────────────── */
+  .scan-banner {
+    display: none; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px; margin-bottom: 20px;
+  }
+  .scan-banner.active { display: block; }
+  .scan-banner .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .scan-banner .phase { font-weight: 600; }
+  .scan-banner .pct { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar { height: 7px; background: var(--surface2); border-radius: 999px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--user)); transition: width .3s; }
+  .scan-log { margin-top: 10px; font-size: 12px; color: var(--muted); font-family: ui-monospace, monospace; max-height: 86px; overflow-y: auto; line-height: 1.5; }
+
+  /* ── cards ─────────────────────────────────────────────────── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+  .card-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 7px; }
+  .card-value { font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
+  .card-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .card.flagged .card-value { color: var(--danger); }
+  .card.users .card-value { color: var(--user); }
+  .card.sp .card-value { color: var(--sp); }
+
+  /* ── heatmap ───────────────────────────────────────────────── */
+  .heatmap-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 22px; }
+  .heatmap-wrap h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .heatmap-wrap .hint { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .heatmap { display: flex; flex-wrap: wrap; gap: 8px; }
+  .heat-cell {
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; cursor: pointer;
+    min-width: 140px; flex: 0 0 auto; transition: transform .12s, border-color .12s;
+  }
+  .heat-cell:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .heat-cell.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .heat-cell .hc-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+  .heat-cell .hc-count { font-size: 20px; font-weight: 700; margin-top: 4px; }
+  .heat-cell .hc-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* ── toolbar ───────────────────────────────────────────────── */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .toolbar input[type="text"], .toolbar select {
+    font-family: var(--font); font-size: 13px; background: var(--surface2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 11px;
+  }
+  .toolbar input[type="text"] { min-width: 240px; flex: 1; }
+  .toolbar input::placeholder { color: var(--muted); }
+  .toolbar .spacer { flex: 1; }
+
+  /* ── toast ─────────────────────────────────────────────────── */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--surface2); border: 1px solid var(--border);
+    padding: 10px 20px; border-radius: 8px; font-size: 13px;
+    opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; z-index: 200;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .filter-summary { font-size: 12px; color: var(--muted); }
+  .col-btn.export-btn { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .col-btn.export-btn:hover { background: #3f6fe0; }
+
+  /* ── settings popover ──────────────────────────────────────── */
+  .pop { position: absolute; top: 44px; right: 0; width: 320px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; z-index: 60; box-shadow: 0 12px 40px rgba(0,0,0,.5); display: none; }
+  .pop.open { display: block; }
+  .pop h4 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+  .pop .field { margin-bottom: 14px; }
+  .pop label.lbl { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .pop select { width: 100%; background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-family: var(--font); font-size: 13px; }
+  .pop .checks { display: flex; flex-direction: column; gap: 7px; }
+  .pop .checks label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+  .pop .pop-foot { display: flex; gap: 8px; margin-top: 4px; }
+  .pop .pop-foot button { flex: 1; }
+
+  /* ── table ─────────────────────────────────────────────────── */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface); }
+  th .sort-indicator { color: var(--accent); margin-left: 4px; }
+  tbody tr { cursor: pointer; transition: background .1s; }
+  tbody tr:hover { background: var(--surface2); }
+  td .role-pill, td .type-pill {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--border);
+  }
+  .type-pill.User { color: var(--user); border-color: var(--user); }
+  .type-pill.ServicePrincipal { color: var(--sp); border-color: var(--sp); }
+  .type-pill.Unknown { color: var(--danger); border-color: var(--danger); }
+  .scope-pill { font-size: 11px; color: var(--muted); }
+  .orphan-flag { color: var(--danger); font-weight: 600; }
+  .principal-name { font-weight: 500; }
+  .principal-upn { font-size: 11px; color: var(--muted); }
+  .empty-rows { text-align: center; color: var(--muted); padding: 40px; }
+
+  /* ── pager ─────────────────────────────────────────────────── */
+  .pager { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; }
+  .pager button { padding: 5px 11px; min-width: 34px; }
+  .pager button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pager .ell { color: var(--muted); padding: 0 4px; }
+
+  /* ── per-column header filter ──────────────────────────────── */
+  th .filter-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-left: 6px; padding: 1px 3px; border-radius: 4px;
+    color: var(--muted); vertical-align: middle; cursor: pointer;
+  }
+  th .filter-icon:hover { background: var(--surface2); color: var(--text); }
+  th .filter-icon svg { width: 11px; height: 11px; fill: currentColor; }
+  th .filter-icon.active { color: var(--accent); }
+  th .filter-icon.open { background: var(--surface2); color: var(--text); }
+  th .filter-icon .filter-count {
+    margin-left: 3px; font-size: 9px; font-weight: 700; line-height: 1;
+    background: var(--accent); color: #fff; border-radius: 7px; padding: 1px 4px;
+  }
+
+  .col-filter-pop {
+    position: absolute; z-index: 200; min-width: 190px; max-width: 280px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.45);
+  }
+  .col-filter-pop .pop-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted); margin-bottom: 8px;
+  }
+  .col-filter-pop .pop-opts { max-height: 260px; overflow-y: auto; }
+  .col-filter-pop .pop-opt {
+    display: flex; align-items: center; gap: 8px; padding: 5px 4px;
+    font-size: 13px; color: var(--text); cursor: pointer; border-radius: 5px;
+    white-space: normal; text-transform: none; letter-spacing: 0;
+  }
+  .col-filter-pop .pop-opt:hover { background: var(--surface2); }
+  .col-filter-pop .pop-opt input { accent-color: var(--accent); cursor: pointer; margin: 0; }
+  .col-filter-pop .pop-empty { font-size: 12px; color: var(--muted); padding: 4px; }
+  .col-filter-pop .pop-foot {
+    display: flex; justify-content: flex-end; margin-top: 8px;
+    padding-top: 8px; border-top: 1px solid var(--border);
+  }
+  .col-filter-pop .pop-clear {
+    background: none; border: none; color: var(--accent); font-family: var(--font);
+    font-size: 12px; cursor: pointer; padding: 2px 4px;
+  }
+  .col-filter-pop .pop-clear:hover { text-decoration: underline; }
+
+  /* ── detail panel ──────────────────────────────────────────── */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 90; display: none; }
+  .overlay.open { display: block; }
+  .detail { position: fixed; top: 0; right: 0; height: 100%; width: 440px; max-width: 92vw; background: var(--surface); border-left: 1px solid var(--border); z-index: 100; transform: translateX(100%); transition: transform .2s; overflow-y: auto; }
+  .detail.open { transform: translateX(0); }
+  .detail .dhead { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+  .detail .dhead h3 { font-size: 15px; font-weight: 600; }
+  .detail .dnav { display: flex; gap: 6px; }
+  .detail .dbody { padding: 20px; }
+  .detail .drow { margin-bottom: 16px; }
+  .detail .drow .k { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 4px; }
+  .detail .drow .v { font-size: 14px; word-break: break-all; }
+  .rec-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
+  .rec-box .ra { font-weight: 600; margin-bottom: 4px; }
+  .rec-box .rr { font-size: 13px; color: var(--muted); line-height: 1.4; }
+
+  /* ── light theme (toggled via .light on <html>) ──────────────── */
+  html.light {
+    --bg:       #f4f6fb;
+    --surface:  #ffffff;
+    --surface2: #eef1f7;
+    --border:   #d4d9e6;
+    --text:     #1c2230;
+    --muted:    #5c6679;
+    --accent:   #3a6ae0;
+  }
+  /* ── theme toggle (fixed, bottom-left) ───────────────────────── */
+  .theme-toggle {
+    position: fixed; left: 18px; bottom: 18px; z-index: 50;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 8px 14px; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    transition: border-color .15s, background .15s, color .15s;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle .ico { font-size: 15px; line-height: 1; }
+</style>
+<script>
+  // Apply the saved theme before first paint to avoid a flash of the wrong theme.
+  (function () {
+    try { if (localStorage.getItem('azureHub.theme') === 'light') document.documentElement.classList.add('light'); } catch (e) {}
+  })();
+</script>
+</head>
+<body class="needs-data">
+
+<header>
+  <span class="logo">🔐</span>
+  <div>
+    <div class="crumbs"><a href="/">Azure Engineering</a> › Privileged Access Scanner</div>
+    <h1>Privileged Access Scanner</h1>
+  </div>
+  <div class="header-actions">
+    <button id="refreshBtn" class="ghost" onclick="loadResults(true)" title="Reload last scan">↻</button>
+    <button id="settingsBtn" class="ghost" onclick="toggleScanPop()">⚙ Scan settings</button>
+    <button id="scanBtn" class="primary" onclick="startScan()">Run Scan</button>
+    <button id="cancelBtn" class="ghost" onclick="cancelScan()" style="display:none;">Cancel</button>
+
+    <!-- scan settings popover -->
+    <div class="pop" id="scanPop">
+      <div class="field">
+        <label class="lbl">Scope</label>
+        <select id="subSelect">
+          <option value="">All subscriptions (+ management groups)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="lbl">Scannable privileged roles</label>
+        <div class="checks" id="roleChecks">
+          <label><input type="checkbox" value="Owner" checked> Owner</label>
+          <label><input type="checkbox" value="Contributor" checked> Contributor</label>
+          <label><input type="checkbox" value="User Access Administrator" checked> User Access Administrator</label>
+          <label><input type="checkbox" value="Role Based Access Control Administrator" checked> Role Based Access Control Administrator</label>
+        </div>
+      </div>
+      <div class="pop-foot">
+        <button class="ghost" onclick="toggleScanPop()">Close</button>
+        <button class="primary" onclick="startScan()">Run Scan</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- empty state -->
+  <div class="empty">
+    <div class="big">🔐</div>
+    <h2>No privileged-access scan yet</h2>
+    <p>Scan your subscriptions and management groups for standing privileged role assignments held
+       directly by users and service principals. Configure scannable roles and scope in
+       <b>⚙ Scan settings</b>, then run a scan.</p>
+    <button class="primary" onclick="startScan()">Run your first scan</button>
+  </div>
+
+  <!-- progress -->
+  <div class="scan-banner" id="scanBanner">
+    <div class="top">
+      <span class="phase" id="scanPhase">Starting…</span>
+      <span class="pct" id="scanPct">0%</span>
+    </div>
+    <div class="bar"><i id="scanBar"></i></div>
+    <div class="scan-log" id="scanLog"></div>
+  </div>
+
+  <div class="has-data">
+    <!-- summary cards -->
+    <div class="cards">
+      <div class="card flagged"><div class="card-label">Total Assignments</div><div class="card-value" id="cTotal">—</div><div class="card-sub" id="cTotalSub"></div></div>
+      <div class="card"><div class="card-label">Distinct Identities</div><div class="card-value" id="cDistinct">—</div><div class="card-sub">privileged principals</div></div>
+      <div class="card users"><div class="card-label">User Assignments</div><div class="card-value" id="cUsers">—</div><div class="card-sub">standing access</div></div>
+      <div class="card sp"><div class="card-label">Service Principals</div><div class="card-value" id="cSp">—</div><div class="card-sub">direct grants</div></div>
+      <div class="card flagged"><div class="card-label">Orphaned</div><div class="card-value" id="cOrphan">—</div><div class="card-sub">deleted principals</div></div>
+    </div>
+
+    <!-- heatmap -->
+    <div class="heatmap-wrap" id="heatmapWrap" hidden>
+      <h3>Privileged assignment heatmap</h3>
+      <div class="hint">Scopes with the most direct privileged assignments. Click to filter the table.</div>
+      <div class="heatmap" id="heatmap"></div>
+    </div>
+
+    <!-- toolbar -->
+    <div class="toolbar">
+      <input type="text" id="search" placeholder="Search principal, role, scope, subscription…" oninput="onFilterChange()" />
+      <span class="spacer"></span>
+      <span class="filter-summary" id="filterSummary"></span>
+      <button class="ghost" id="clearBtn" onclick="clearFilters()" style="display:none;">Clear</button>
+      <button type="button" class="col-btn" id="copyCmdBtn" onclick="copyRemovalCommands()" title="Copy Azure CLI commands to remove the orphaned role assignments currently shown.">⧉ Copy removal cmds</button>
+      <button class="col-btn export-btn" onclick="exportCsv()" id="exportBtn">⬇ Export CSV</button>
+    </div>
+
+    <!-- table -->
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr id="headRow"></tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="pager" id="pager"></div>
+  </div>
+
+  <!-- column-filter popover (anchored to the clicked header icon) -->
+  <div id="colFilterPop" class="col-filter-pop" hidden></div>
+</main>
+
+<!-- detail panel -->
+<div class="overlay" id="overlay" onclick="closeDetail()"></div>
+<aside class="detail" id="detail">
+  <div class="dhead">
+    <h3 id="dTitle">Assignment</h3>
+    <div class="dnav">
+      <button class="ghost" onclick="navDetail(-1)" title="Previous (←)">‹</button>
+      <button class="ghost" onclick="navDetail(1)" title="Next (→)">›</button>
+      <button class="ghost" onclick="closeDetail()" title="Close (Esc)">✕</button>
+    </div>
+  </div>
+  <div class="dbody" id="dBody"></div>
+</aside>
+
+<script>
+/* ── state ──────────────────────────────────────────────────── */
+let allData = [];        // all assignment rows
+let meta = null;
+let sortKey = 'RoleDefinitionName', sortDir = 1;
+let heatFilter = null;   // {key:'sub'|'scope', value}
+let currentPage = 1, pageSize = 12;
+let detailRows = [], detailIndex = -1;
+let pollTimer = null;
+
+const COLS = [
+  { key: 'PrincipalDisplayName', label: 'Principal' },
+  { key: 'PrincipalType',        label: 'Type' },
+  { key: 'RoleDefinitionName',   label: 'Role' },
+  { key: 'ScopeLevel',           label: 'Scope Level' },
+  { key: 'ScopeName',            label: 'Scope' },
+  { key: 'SubscriptionName',     label: 'Subscription' },
+  { key: 'RecommendedAction',    label: 'Recommendation' },
+];
+
+// Per-column header filters. `options` lists the [value, label] choices; `dynamic`
+// columns derive their choices from the distinct values in the loaded data.
+// `valueOf` maps a row to the value to match when the column isn't a plain field.
+// Each filter is multi-select: colFilters[key] is an array of chosen values.
+const COL_FILTERS = {
+  PrincipalType: { options: [
+    ['User', 'Users'], ['ServicePrincipal', 'Service principals'], ['Unknown', 'Orphaned / unknown'] ] },
+  RoleDefinitionName: { dynamic: true },
+  ScopeLevel: { options: [
+    ['ManagementGroup', 'Management Group'], ['Subscription', 'Subscription'], ['ResourceGroup', 'Resource Group'] ] },
+  RecommendedAction: { dynamic: true, accessor: r => r.RecommendedAction?.Action || '' },
+};
+let colFilters = {};   // { PrincipalType: ['User','Unknown'], RoleDefinitionName: ['Owner'], ... }
+
+/* Toggle one value within a column's multi-select filter. Keeps the popover open
+   so several values can be picked in a row. */
+function toggleColValue(key, value, checked) {
+  const set = new Set(colFilters[key] || []);
+  if (checked) set.add(value); else set.delete(value);
+  if (set.size) colFilters[key] = [...set]; else delete colFilters[key];
+  currentPage = 1;
+  buildHead();   // refresh icon .active highlight + count
+  render();
+}
+
+/* Clear just one column's filter (from the popover footer). */
+function clearColFilter(key) {
+  delete colFilters[key];
+  currentPage = 1;
+  buildHead();
+  render();
+  closeColFilter();
+}
+
+const FUNNEL_SVG = '<svg viewBox="0 0 16 16"><path d="M1 2h14l-5.4 6.4v4.2l-3.2 1.6V8.4z"/></svg>';
+
+/* [value, label] choices for a column's filter. */
+function colFilterChoices(key) {
+  const f = COL_FILTERS[key];
+  if (f.dynamic) {
+    const accessor = f.accessor || (r => r[key]);
+    return [...new Set(allData.map(accessor).filter(Boolean))].sort().map(v => [v, v]);
+  }
+  return f.options;
+}
+
+/* Open/close the filter popover anchored under a header's funnel icon. */
+let openFilterKey = null;
+function toggleColFilter(evt, key) {
+  evt.stopPropagation();   // don't trigger the header's sort handler
+  if (openFilterKey === key) { closeColFilter(); return; }
+  const pop = document.getElementById('colFilterPop');
+  const label = COLS.find(c => c.key === key)?.label || '';
+  const sel = new Set(colFilters[key] || []);
+  const choices = colFilterChoices(key);
+  const rows = choices.length
+    ? choices.map(([v, l]) =>
+        `<label class="pop-opt"><input type="checkbox" value="${escapeHtml(v)}"${sel.has(v) ? ' checked' : ''}` +
+        ` onchange="toggleColValue('${key}', this.value, this.checked)"><span>${escapeHtml(l)}</span></label>`).join('')
+    : '<div class="pop-empty">No values</div>';
+  pop.innerHTML =
+    `<div class="pop-label">Filter by ${escapeHtml(label)}</div>` +
+    `<div class="pop-opts">${rows}</div>` +
+    `<div class="pop-foot"><button type="button" class="pop-clear" onclick="clearColFilter('${key}')">Clear</button></div>`;
+  pop.hidden = false;
+  const rect = evt.currentTarget.getBoundingClientRect();
+  const popW = pop.offsetWidth;
+  let left = rect.left + window.scrollX;
+  left = Math.min(left, window.scrollX + document.documentElement.clientWidth - popW - 8);
+  pop.style.left = Math.max(8, left) + 'px';
+  pop.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+  openFilterKey = key;
+  buildHead();   // mark the icon .open
+}
+function closeColFilter() {
+  const pop = document.getElementById('colFilterPop');
+  if (pop) { pop.hidden = true; pop.innerHTML = ''; }
+  if (openFilterKey !== null) { openFilterKey = null; buildHead(); }
+}
+// Close on outside click or Escape.
+document.addEventListener('click', e => {
+  if (openFilterKey === null) return;
+  const pop = document.getElementById('colFilterPop');
+  if (pop && !pop.contains(e.target) && !e.target.closest('.filter-icon')) closeColFilter();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeColFilter(); });
+
+/* ConvertTo-Json collapses single-element arrays to a scalar. */
+function asArray(v) { return Array.isArray(v) ? v : (v == null ? [] : [v]); }
+
+/* ── init ───────────────────────────────────────────────────── */
+loadSubscriptions();
+loadResults(false);
+
+/* ── settings popover ───────────────────────────────────────── */
+function toggleScanPop() { document.getElementById('scanPop').classList.toggle('open'); }
+document.addEventListener('click', e => {
+  const pop = document.getElementById('scanPop');
+  if (pop.classList.contains('open') &&
+      !pop.contains(e.target) &&
+      e.target.id !== 'settingsBtn') {
+    pop.classList.remove('open');
+  }
+});
+
+async function loadSubscriptions() {
+  try {
+    const r = await fetch('/api/subscriptions');
+    if (!r.ok) return;
+    const json = await r.json();
+    const subs = asArray(json.subscriptions);
+    const sel = document.getElementById('subSelect');
+    subs.forEach(s => {
+      const o = document.createElement('option');
+      o.value = s.Id; o.textContent = s.Name;
+      sel.appendChild(o);
+    });
+  } catch { /* server offline */ }
+}
+
+function selectedRoles() {
+  return [...document.querySelectorAll('#roleChecks input:checked')].map(c => c.value);
+}
+
+/* ── scan lifecycle ─────────────────────────────────────────── */
+async function startScan() {
+  document.getElementById('scanPop').classList.remove('open');
+  const roles = selectedRoles();
+  if (!roles.length) { alert('Select at least one privileged role to scan.'); return; }
+  const body = {
+    singleSubscriptionId: document.getElementById('subSelect').value || '',
+    privilegedRoles: roles,
+  };
+  try {
+    const r = await fetch('/api/pa/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (r.status === 409) { alert('A scan is already running.'); return; }
+    setScanning(true);
+    pollStatus();
+  } catch { alert('Could not reach the dashboard server. Is Start-Dashboard.ps1 running?'); }
+}
+
+async function cancelScan() {
+  try { await fetch('/api/pa/scan/cancel', { method: 'POST' }); } catch {}
+}
+
+function setScanning(on) {
+  document.getElementById('scanBtn').disabled = on;
+  document.getElementById('cancelBtn').style.display = on ? '' : 'none';
+  document.getElementById('scanBanner').classList.toggle('active', on);
+}
+
+async function pollStatus() {
+  if (pollTimer) clearTimeout(pollTimer);
+  try {
+    const r = await fetch('/api/pa/status');
+    const s = await r.json();
+    const prog = s.Progress;
+    if (prog) {
+      document.getElementById('scanPhase').textContent =
+        prog.Message || (prog.Phase === 'done' ? 'Finishing…' : 'Scanning…');
+      document.getElementById('scanPct').textContent = (prog.Percent ?? 0) + '%';
+      document.getElementById('scanBar').style.width = (prog.Percent ?? 0) + '%';
+      const log = asArray(prog.LogTail);
+      document.getElementById('scanLog').innerHTML = log.map(l => `<div>${escapeHtml(l)}</div>`).join('');
+    }
+    if (s.State === 'running') {
+      pollTimer = setTimeout(pollStatus, 1200);
+    } else {
+      setScanning(false);
+      if (s.State === 'failed') {
+        document.getElementById('scanPhase').textContent = 'Scan failed: ' + (s.Message || 'unknown error');
+        document.getElementById('scanBanner').classList.add('active');
+      } else if (s.State === 'cancelled') {
+        setScanning(false);
+      } else {
+        await loadResults(false);
+      }
+    }
+  } catch {
+    pollTimer = setTimeout(pollStatus, 2000);
+  }
+}
+
+/* ── load + render ──────────────────────────────────────────── */
+async function loadResults(userInitiated) {
+  try {
+    const r = await fetch('/api/pa/results');
+    if (!r.ok) return;
+    const json = await r.json();
+    applyData(json);
+  } catch { /* leave empty state */ }
+}
+
+function applyData(json) {
+  meta = json.ScanMetadata || null;
+  allData = asArray(json.Assignments);
+  if (!meta || !allData.length) {
+    document.body.classList.add('needs-data');
+    return;
+  }
+  document.body.classList.remove('needs-data');
+
+  // sync role checkboxes to the roles that were actually scanned
+  const scanned = asArray(meta.PrivilegedRoles);
+  if (scanned.length) {
+    document.querySelectorAll('#roleChecks input').forEach(c => {
+      c.checked = scanned.includes(c.value);
+    });
+  }
+  buildHead();
+  updateCards();
+  buildHeatmap();
+  currentPage = 1;
+  render();
+}
+
+function buildHead() {
+  // Each header sorts on click; filterable columns get a funnel icon that opens
+  // a filter popover (the icon stops propagation so it doesn't also sort).
+  document.getElementById('headRow').innerHTML = COLS.map(c => {
+    const sort = `<span class="sort-indicator">${
+      sortKey === c.key ? (sortDir > 0 ? '▲' : '▼') : '⇅'
+    }</span>`;
+    let funnel = '';
+    if (COL_FILTERS[c.key]) {
+      const sel = colFilters[c.key] || [];
+      const cls = 'filter-icon' + (sel.length ? ' active' : '') + (openFilterKey === c.key ? ' open' : '');
+      const badge = sel.length ? `<span class="filter-count">${sel.length}</span>` : '';
+      funnel = `<span class="${cls}" title="Filter" onclick="toggleColFilter(event, '${c.key}')">${FUNNEL_SVG}${badge}</span>`;
+    }
+    return `<th onclick="sortBy('${c.key}')">${c.label}${sort}${funnel}</th>`;
+  }).join('');
+}
+
+function updateCards() {
+  document.getElementById('cTotal').textContent    = meta.TotalAssignments ?? allData.length;
+  document.getElementById('cDistinct').textContent = meta.DistinctPrincipals ?? '—';
+  document.getElementById('cUsers').textContent    = meta.UserAssignments ?? '—';
+  document.getElementById('cSp').textContent       = meta.ServicePrincipalAssignments ?? '—';
+  document.getElementById('cOrphan').textContent   = meta.OrphanedAssignments ?? '—';
+  const subs = meta.SubscriptionsScanned ?? 0;
+  const when = meta.ScanTime ? new Date(meta.ScanTime) : null;
+  document.getElementById('cTotalSub').textContent =
+    `${subs} sub${subs === 1 ? '' : 's'}${when ? ' · ' + when.toLocaleString() : ''}`;
+}
+
+/* heatmap: top scopes (subscription/MG) by privileged assignment count */
+function buildHeatmap() {
+  const byScope = {};
+  allData.forEach(r => {
+    const key = r.SubscriptionId;
+    if (!byScope[key]) byScope[key] = { name: r.SubscriptionName || r.SubscriptionId, id: key, count: 0, users: 0, orphan: 0 };
+    byScope[key].count++;
+    if (r.PrincipalType === 'User') byScope[key].users++;
+    if (r.IsOrphaned) byScope[key].orphan++;
+  });
+  const cells = Object.values(byScope).sort((a, b) => b.count - a.count).slice(0, 12);
+  const wrap = document.getElementById('heatmapWrap');
+  if (cells.length < 2) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  const max = cells[0].count || 1;
+  document.getElementById('heatmap').innerHTML = cells.map(c => {
+    const intensity = 0.12 + 0.55 * (c.count / max);
+    const active = heatFilter && heatFilter.value === c.id ? ' active' : '';
+    return `<div class="heat-cell${active}" style="background:rgba(240,106,106,${intensity.toFixed(2)})"
+                 onclick="toggleHeat('${c.id.replace(/'/g, "\\'")}')">
+      <div class="hc-name" title="${escapeHtml(c.name)}">${escapeHtml(c.name)}</div>
+      <div class="hc-count">${c.count}</div>
+      <div class="hc-meta">${c.users} user · ${c.orphan} orphaned</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleHeat(id) {
+  heatFilter = (heatFilter && heatFilter.value === id) ? null : { key: 'sub', value: id };
+  currentPage = 1;
+  buildHeatmap();
+  render();
+}
+
+/* ── filtering ──────────────────────────────────────────────── */
+function getFilteredRows() {
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  // colFilters[key] is an array of selected values; empty/absent means no filter.
+  const colEntries = Object.entries(colFilters).filter(([, v]) => v && v.length);
+
+  let rows = allData.filter(r => {
+    for (const [key, vals] of colEntries) {
+      const accessor = COL_FILTERS[key].accessor || (row => row[key]);
+      if (!vals.includes(accessor(r))) return false;
+    }
+    if (heatFilter && r.SubscriptionId !== heatFilter.value) return false;
+    if (q) {
+      const hay = [r.PrincipalDisplayName, r.PrincipalSignInName, r.RoleDefinitionName,
+                   r.ScopeName, r.SubscriptionName, r.PrincipalId].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  rows.sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (sortKey === 'RecommendedAction') { av = a.RecommendedAction?.Action; bv = b.RecommendedAction?.Action; }
+    av = (av ?? '').toString().toLowerCase();
+    bv = (bv ?? '').toString().toLowerCase();
+    return av < bv ? -sortDir : av > bv ? sortDir : 0;
+  });
+  return rows;
+}
+
+function onFilterChange() { currentPage = 1; render(); }
+
+function clearFilters() {
+  document.getElementById('search').value = '';
+  colFilters = {};
+  heatFilter = null;
+  currentPage = 1;
+  closeColFilter();
+  buildHead();
+  buildHeatmap();
+  render();
+}
+
+function sortBy(key) {
+  if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; }
+  buildHead();
+  render();
+}
+
+/* ── render table ───────────────────────────────────────────── */
+function computePageSize() {
+  const wrap = document.querySelector('.table-wrap');
+  const top = wrap ? wrap.getBoundingClientRect().top : 400;
+  return Math.max(6, Math.floor((window.innerHeight - top - 96 - 42) / 44));
+}
+
+function render() {
+  pageSize = computePageSize();
+  const rows = getFilteredRows();
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  if (currentPage > totalPages) currentPage = totalPages;
+  const start = (currentPage - 1) * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
+  detailRows = rows;
+
+  const tbody = document.getElementById('tbody');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="${COLS.length}" class="empty-rows">No assignments match the current filters.</td></tr>`;
+  } else {
+    tbody.innerHTML = pageRows.map((r, li) => {
+      const i = start + li;
+      const rec = r.RecommendedAction || {};
+      return `<tr onclick="openDetail(${i})">
+        <td><span class="principal-name">${escapeHtml(r.PrincipalDisplayName || '(unknown)')}</span>
+            ${r.PrincipalSignInName ? `<div class="principal-upn">${escapeHtml(r.PrincipalSignInName)}</div>` : ''}</td>
+        <td><span class="type-pill ${escapeHtml(r.PrincipalType)}">${escapeHtml(r.PrincipalType)}</span></td>
+        <td><span class="role-pill">${escapeHtml(r.RoleDefinitionName)}</span></td>
+        <td><span class="scope-pill">${escapeHtml(scopeLevelLabel(r.ScopeLevel))}</span></td>
+        <td>${escapeHtml(r.ScopeName || '—')}${r.ResourceGroupName && r.ScopeLevel === 'ResourceGroup' ? '' : ''}</td>
+        <td>${escapeHtml(r.SubscriptionName || '—')}</td>
+        <td>${r.IsOrphaned ? '<span class="orphan-flag">⚠ </span>' : ''}${escapeHtml(rec.Action || '—')}</td>
+      </tr>`;
+    }).join('');
+  }
+  updateFilterSummary(rows.length, start, pageRows.length);
+  renderPager(totalPages);
+}
+
+function scopeLevelLabel(l) {
+  return l === 'ManagementGroup' ? 'Mgmt Group' : l === 'ResourceGroup' ? 'Resource Group' : l;
+}
+
+function updateFilterSummary(total, start, shown) {
+  const anyFilter = document.getElementById('search').value || Object.keys(colFilters).length || heatFilter;
+  document.getElementById('clearBtn').style.display = anyFilter ? '' : 'none';
+  document.getElementById('exportBtn').textContent = `⬇ Export CSV (${total})`;
+  if (!total) { document.getElementById('filterSummary').textContent = ''; return; }
+  document.getElementById('filterSummary').textContent =
+    `Showing ${start + 1}–${start + shown} of ${total}`;
+}
+
+function renderPager(totalPages) {
+  const pager = document.getElementById('pager');
+  if (totalPages <= 1) { pager.innerHTML = ''; return; }
+  let html = `<button onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>‹</button>`;
+  const pages = pageList(currentPage, totalPages);
+  pages.forEach(p => {
+    if (p === '…') html += `<span class="ell">…</span>`;
+    else html += `<button class="${p === currentPage ? 'active' : ''}" onclick="goToPage(${p})">${p}</button>`;
+  });
+  html += `<button onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>›</button>`;
+  pager.innerHTML = html;
+}
+
+function pageList(cur, total) {
+  const out = [];
+  const add = n => out.push(n);
+  if (total <= 7) { for (let i = 1; i <= total; i++) add(i); return out; }
+  add(1);
+  if (cur > 3) out.push('…');
+  for (let i = Math.max(2, cur - 1); i <= Math.min(total - 1, cur + 1); i++) add(i);
+  if (cur < total - 2) out.push('…');
+  add(total);
+  return out;
+}
+
+function goToPage(p) {
+  const total = Math.max(1, Math.ceil(getFilteredRows().length / pageSize));
+  currentPage = Math.min(Math.max(1, p), total);
+  render();
+}
+
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (!document.body.classList.contains('needs-data')) render(); }, 200);
+});
+
+/* ── detail panel ───────────────────────────────────────────── */
+function openDetail(i) {
+  detailIndex = i;
+  renderDetail();
+  document.getElementById('overlay').classList.add('open');
+  document.getElementById('detail').classList.add('open');
+}
+function closeDetail() {
+  document.getElementById('overlay').classList.remove('open');
+  document.getElementById('detail').classList.remove('open');
+  detailIndex = -1;
+}
+function navDetail(delta) {
+  if (detailIndex < 0) return;
+  const ni = detailIndex + delta;
+  if (ni < 0 || ni >= detailRows.length) return;
+  detailIndex = ni;
+  currentPage = Math.floor(ni / pageSize) + 1;
+  render();
+  renderDetail();
+}
+function renderDetail() {
+  const r = detailRows[detailIndex];
+  if (!r) return;
+  document.getElementById('dTitle').textContent = r.PrincipalDisplayName || '(unknown principal)';
+  const rec = r.RecommendedAction || {};
+  const field = (k, v) => `<div class="drow"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  document.getElementById('dBody').innerHTML =
+    field('Principal', `${escapeHtml(r.PrincipalDisplayName || '(unknown)')}<span class="type-pill ${escapeHtml(r.PrincipalType)}" style="margin-left:8px;">${escapeHtml(r.PrincipalType)}</span>`) +
+    (r.PrincipalSignInName ? field('Sign-in name', escapeHtml(r.PrincipalSignInName)) : '') +
+    field('Principal ID', escapeHtml(r.PrincipalId || '—')) +
+    field('Role', escapeHtml(r.RoleDefinitionName)) +
+    field('Scope level', escapeHtml(scopeLevelLabel(r.ScopeLevel))) +
+    field('Scope', escapeHtml(r.ScopeName || '—')) +
+    field('Subscription', escapeHtml(r.SubscriptionName || '—')) +
+    (r.ResourceGroupName ? field('Resource group', escapeHtml(r.ResourceGroupName)) : '') +
+    field('Scope path', `<code style="font-size:11px;">${escapeHtml(r.Scope || '—')}</code>`) +
+    (r.IsOrphaned ? field('Status', '<span class="orphan-flag">⚠ Orphaned — principal not found in directory</span>') : '') +
+    field('Recommendation', `<div class="rec-box"><div class="ra">${escapeHtml(rec.Action || '—')}</div><div class="rr">${escapeHtml(rec.Reason || '')}</div></div>`) +
+    field('Assignment ID', `<code style="font-size:11px;">${escapeHtml(r.RoleAssignmentId || '—')}</code>`);
+}
+
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('detail').classList.contains('open')) return;
+  if (e.key === 'Escape') closeDetail();
+  else if (e.key === 'ArrowLeft') navDetail(-1);
+  else if (e.key === 'ArrowRight') navDetail(1);
+});
+
+/* ── CSV export ─────────────────────────────────────────────── */
+function exportCsv() {
+  const rows = getFilteredRows();
+  if (!rows.length) { alert('No rows to export.'); return; }
+  const headers = ['Principal', 'SignInName', 'PrincipalType', 'PrincipalId', 'Role', 'ScopeLevel',
+                   'Scope', 'ScopePath', 'Subscription', 'SubscriptionId', 'ResourceGroup',
+                   'IsOrphaned', 'RecommendedAction', 'Reason', 'RoleAssignmentId'];
+  const esc = v => {
+    let s = (v ?? '').toString();
+    // CSV formula-injection guard (see entra-users.html for rationale).
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.join(',')];
+  rows.forEach(r => {
+    const rec = r.RecommendedAction || {};
+    lines.push([r.PrincipalDisplayName, r.PrincipalSignInName, r.PrincipalType, r.PrincipalId,
+      r.RoleDefinitionName, r.ScopeLevel, r.ScopeName, r.Scope, r.SubscriptionName, r.SubscriptionId,
+      r.ResourceGroupName, r.IsOrphaned, rec.Action, rec.Reason, r.RoleAssignmentId].map(esc).join(','));
+  });
+  const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `privileged-access-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ── copy removal commands ──────────────────────────────────────
+   Builds ready-to-run Azure CLI commands to delete the ORPHANED role
+   assignments in the current view (principal no longer exists in the
+   directory). Non-orphaned assignments are deliberately excluded — removing
+   live privileged access is a judgement call, not a cleanup. Rows missing a
+   RoleAssignmentId are commented out as a guard. */
+function copyRemovalCommands() {
+  const rows = getFilteredRows().filter(r => r.IsOrphaned);
+  if (!rows.length) { showToast('No orphaned role assignments in the current view to remove.'); return; }
+
+  const lines = [
+    '# Review carefully before running. Generated by Privileged Access Scanner.',
+    '# Only orphaned assignments (principal not found in directory) are included.',
+    '# Lines without an assignment ID are commented out as a safety guard.',
+    ''
+  ];
+  let active = 0;
+  for (const r of rows) {
+    const who = `${r.PrincipalDisplayName || r.PrincipalId || 'unknown'} · ${r.RoleDefinitionName || '?'} @ ${r.ScopeName || r.Scope || '?'}`;
+    if (r.RoleAssignmentId) {
+      lines.push(`# ${who}`);
+      lines.push(`az role assignment delete --ids "${r.RoleAssignmentId}"`);
+      active++;
+    } else {
+      lines.push(`# [GUARDED: no assignment ID] ${who}`);
+    }
+  }
+  const text = lines.join('\n');
+  const done = () => showToast(`Copied ${active} removal command${active === 1 ? '' : 's'} (${rows.length - active} guarded) to clipboard.`);
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch { showToast('Copy failed — clipboard unavailable.'); }
+  document.body.removeChild(ta);
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+/* ── util ───────────────────────────────────────────────────── */
+function escapeHtml(s) {
+  return (s ?? '').toString().replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+</script>
+<div class="toast" id="toast"></div>
+
+<button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">
+  <span class="ico" id="themeIco">🌙</span><span id="themeLabel">Dark</span>
+</button>
+<script>
+  function applyThemeButton() {
+    const light = document.documentElement.classList.contains('light');
+    document.getElementById('themeIco').textContent = light ? '☀️' : '🌙';
+    document.getElementById('themeLabel').textContent = light ? 'Light' : 'Dark';
+  }
+  function toggleTheme() {
+    const light = document.documentElement.classList.toggle('light');
+    try { localStorage.setItem('azureHub.theme', light ? 'light' : 'dark'); } catch (e) {}
+    applyThemeButton();
+  }
+  applyThemeButton();
+</script>
+</body>
+</html>

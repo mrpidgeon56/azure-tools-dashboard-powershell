@@ -1,0 +1,17 @@
+# ── Runtime scan artifacts ───────────────────────────────────────────────
+# Written by the scanners at runtime and regenerated on every scan. They hold
+# real tenant data (user lists, role assignments, resource inventory, costs),
+# so they are deliberately NOT version-controlled.
+*-scan-results.json
+*-scan-progress.json
+scan-results.json
+scan-progress.json
+
+# ── Local-only Claude Code settings ──────────────────────────────────────
+# launch.json IS tracked (shared preview config); local permission overrides
+# are per-machine.
+.claude/settings.local.json
+
+# ── Misc ─────────────────────────────────────────────────────────────────
+text.txt
+.DS_Store

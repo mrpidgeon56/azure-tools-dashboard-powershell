@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Azure Engineering</title>
+<style>
+  :root {
+    --bg:         #0f1117;
+    --surface:    #1a1d27;
+    --surface2:   #222535;
+    --border:     #2e3250;
+    --text:       #e2e8f0;
+    --muted:      #8892a4;
+    --accent:     #4f81f7;
+    --danger:     #f06a6a;
+    --warn:       #f5a623;
+    --ok:         #52c78f;
+    --cost:       #b47fe8;
+    --radius:     8px;
+    --font:       "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    min-height: 100vh;
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 28px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .logo { font-size: 22px; }
+  h1 { font-size: 17px; font-weight: 600; letter-spacing: -.2px; }
+  .header-meta { font-size: 12px; color: var(--muted); }
+
+  /* On-demand auth control (right side of header). */
+  .auth { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .auth-status { font-size: 12px; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+  .auth-status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .auth-status.on  { color: var(--text); }
+  .auth-status.on::before  { background: var(--ok); }
+  .auth-status.off::before { background: var(--danger); }
+  .auth-btn {
+    font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: #fff; border: 1px solid var(--accent);
+    border-radius: 6px; padding: 7px 14px; transition: background .15s, opacity .15s;
+  }
+  .auth-btn:hover { background: #3f6fe0; }
+  .auth-btn.signout { background: transparent; color: var(--text); border-color: var(--border); }
+  .auth-btn.signout:hover { border-color: var(--danger); color: var(--danger); }
+  .auth-btn:disabled { opacity: .55; cursor: not-allowed; }
+  .auth-sub {
+    font-family: var(--font); font-size: 12px; max-width: 240px; cursor: pointer;
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 9px;
+  }
+  .auth-sub:focus { outline: none; border-color: var(--accent); }
+  .auth-sub:disabled { opacity: .55; cursor: progress; }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 40px 28px; }
+  .intro { margin-bottom: 28px; }
+  .intro h2 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; margin-bottom: 6px; }
+  .intro p  { color: var(--muted); max-width: 640px; line-height: 1.5; }
+
+  .tool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 18px;
+  }
+  /* A tool card is the whole clickable surface. */
+  a.tool-card, div.tool-card {
+    display: flex; flex-direction: column; gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px;
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color .15s, transform .15s, box-shadow .15s;
+  }
+  a.tool-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  }
+  .tool-icon { font-size: 28px; }
+  .tool-title { font-size: 16px; font-weight: 600; }
+  .tool-desc  { color: var(--muted); font-size: 13px; line-height: 1.5; flex: 1; }
+  .tool-foot  { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+  .tag {
+    display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+    padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted);
+  }
+  .tag.cost { color: var(--cost); border-color: var(--cost); }
+  .open-link { color: var(--accent); font-size: 13px; font-weight: 600; }
+
+  /* Placeholder cards for tools not yet built — shows the page is a hub. */
+  div.tool-card.placeholder { opacity: .55; border-style: dashed; cursor: default; }
+  div.tool-card.placeholder .open-link { color: var(--muted); }
+
+  /* Live state strip on a tool card (last scan summary). */
+  .tool-stats {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px;
+  }
+  .tool-stats .stat {
+    display: inline-flex; align-items: baseline; gap: 4px;
+    font-size: 12px; padding: 4px 9px; border-radius: 6px;
+    background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+  }
+  .tool-stats .stat b { color: var(--text); font-weight: 600; }
+  .tool-stats .stat.flagged b { color: var(--danger); }
+  .tool-stats .stat.savings b { color: var(--ok); }
+
+  /* ── light theme (toggled via .light on <html>) ──────────────── */
+  html.light {
+    --bg:       #f4f6fb;
+    --surface:  #ffffff;
+    --surface2: #eef1f7;
+    --border:   #d4d9e6;
+    --text:     #1c2230;
+    --muted:    #5c6679;
+    --accent:   #3a6ae0;
+  }
+  html.light a.tool-card:hover { box-shadow: 0 8px 24px rgba(60,80,140,.15); }
+
+  /* ── theme toggle (fixed, bottom-left) ───────────────────────── */
+  .theme-toggle {
+    position: fixed; left: 18px; bottom: 18px; z-index: 50;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 8px 14px; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    transition: border-color .15s, background .15s, color .15s;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle .ico { font-size: 15px; line-height: 1; }
+</style>
+<script>
+  // Apply the saved theme before first paint to avoid a flash of the wrong theme.
+  (function () {
+    try { if (localStorage.getItem('azureHub.theme') === 'light') document.documentElement.classList.add('light'); } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+
+<header>
+  <span class="logo">☁️</span>
+  <div>
+    <h1>Azure Engineering</h1>
+    <div class="header-meta">A hub for internal Azure operations &amp; cost-governance utilities</div>
+  </div>
+  <div class="auth">
+    <span class="auth-status" id="authStatus">Checking session…</span>
+    <select class="auth-sub" id="authSub" onchange="onSubChange()" title="Active subscription" style="display:none"></select>
+    <button class="auth-btn" id="authBtn" onclick="onAuthClick()" disabled>Sign in</button>
+  </div>
+</header>
+
+<main>
+  <div class="intro">
+    <h2>Tools</h2>
+    <p>Self-service utilities for understanding and cleaning up your Azure estate. Pick a tool to get started — more will be added here over time.</p>
+  </div>
+
+  <div class="tool-grid">
+
+    <!-- Idle Resource Scanner -->
+    <a class="tool-card" href="/idle-resources">
+      <div class="tool-icon">🧹</div>
+      <div class="tool-title">Idle Resource Scanner</div>
+      <div class="tool-desc">
+        Scans every subscription and flags resource groups with no recent activity across
+        Activity Log, metrics, and last-modified signals. Surfaces estimated monthly cost,
+        Azure Advisor findings, orphaned resources, locks, and potential cleanup savings.
+      </div>
+      <div class="tool-stats" id="idleStats" hidden></div>
+      <div class="tool-foot">
+        <span class="tag cost">Cost &amp; Cleanup</span>
+        <span class="open-link">Open →</span>
+      </div>
+    </a>
+
+    <!-- Privileged Access Scanner -->
+    <a class="tool-card" href="/privileged-access">
+      <div class="tool-icon">🔐</div>
+      <div class="tool-title">Privileged Access Scanner</div>
+      <div class="tool-desc">
+        Scans subscriptions and management groups for standing (active) privileged role
+        assignments held directly by users and service principals — access that bypasses
+        group-based governance. Surfaces a per-scope heatmap, orphaned assignments, and
+        PIM-eligibility recommendations.
+      </div>
+      <div class="tool-stats" id="paStats" hidden></div>
+      <div class="tool-foot">
+        <span class="tag" style="color:var(--cost);border-color:var(--cost);">Security &amp; Access</span>
+        <span class="open-link">Open →</span>
+      </div>
+    </a>
+
+    <!-- Entra User Scanner -->
+    <a class="tool-card" href="/entra-users">
+      <div class="tool-icon">👤</div>
+      <div class="tool-title">Entra User Scanner</div>
+      <div class="tool-desc">
+        Scans Microsoft Entra ID for stale and orphaned user accounts — members who haven't
+        signed in for months, expired passwords, and unused guest invitations. Distinguishes
+        password-based members from B2B guests and recommends accounts to disable or remove.
+      </div>
+      <div class="tool-stats" id="entraStats" hidden></div>
+      <div class="tool-foot">
+        <span class="tag" style="color:var(--cost);border-color:var(--cost);">Identity &amp; Access</span>
+        <span class="open-link">Open →</span>
+      </div>
+    </a>
+
+    <a class="tool-card" href="/tag-compliance">
+      <div class="tool-icon">🏷️</div>
+      <div class="tool-title">Tag Auditor</div>
+      <div class="tool-desc">
+        Recurses every subscription, resource group, and resource to audit tag usage against
+        your required-tag rules. Flags objects missing required keys, with blank or invalid
+        values, or inconsistent key casing — evaluating effective (inherited) tags.
+      </div>
+      <div class="tool-stats" id="tagStats" hidden></div>
+      <div class="tool-foot">
+        <span class="tag" style="color:var(--cost);border-color:var(--cost);">Governance</span>
+        <span class="open-link">Open →</span>
+      </div>
+    </a>
+
+    <!-- Log Analytics Cost Projector -->
+    <a class="tool-card" href="/log-analytics-cost">
+      <div class="tool-icon">📊</div>
+      <div class="tool-title">Log Analytics Cost Projector</div>
+      <div class="tool-desc">
+        Pick a subscription, resource group, and Log Analytics workspace, then project cost
+        per table from each table's billable ingestion and current retention settings —
+        priced live from the Azure Retail Prices API. Forecast spend over 1, 3, 6, or 12 months.
+      </div>
+      <div class="tool-stats" id="laStats" hidden></div>
+      <div class="tool-foot">
+        <span class="tag cost">Cost &amp; Cleanup</span>
+        <span class="open-link">Open →</span>
+      </div>
+    </a>
+
+    <a class="tool-card" href="/quota-usage">
+      <div class="tool-icon">📈</div>
+      <div class="tool-title">Quota Usage Scanner</div>
+      <div class="tool-desc">
+        Scan every subscription for Compute, Network, and Storage quota usage across the
+        regions each subscription actually uses. Surfaces the quotas closest to their limit,
+        flags them critical or warning, and recommends an action for each.
+      </div>
+      <div class="tool-stats" id="quotaStats" hidden></div>
+      <div class="tool-foot">
+        <span class="tag">Governance</span>
+        <span class="open-link">Open →</span>
+      </div>
+    </a>
+
+    <!-- Placeholder: add future tools by copying a card above and pointing href at a new route -->
+    <div class="tool-card placeholder">
+      <div class="tool-icon">➕</div>
+      <div class="tool-title">More tools coming</div>
+      <div class="tool-desc">
+        This is a hub — drop additional operational tools here (e.g. RBAC reviewer,
+        snapshot cleanup) and link them from this page.
+      </div>
+      <div class="tool-foot">
+        <span class="tag">Planned</span>
+        <span class="open-link">—</span>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">
+  <span class="ico" id="themeIco">🌙</span><span id="themeLabel">Dark</span>
+</button>
+
+<script>
+  // ── On-demand authentication ──────────────────────────────────────────────
+  // No credentials are stored: the server holds the Az context in process memory
+  // only. Sign in opens an interactive Azure login; sign out clears the context.
+  async function refreshAuth() {
+    try {
+      const r = await fetch('/api/auth/status');
+      setAuthUI(await r.json());
+    } catch { setAuthUI(null); }   // server not running
+  }
+
+  function setAuthUI(s) {
+    const status = document.getElementById('authStatus');
+    const btn = document.getElementById('authBtn');
+    const sub = document.getElementById('authSub');
+    if (s && s.authenticated) {
+      status.textContent = s.account;
+      status.className = 'auth-status on';
+      btn.textContent = 'Sign out';
+      btn.className = 'auth-btn signout';
+      btn.dataset.mode = 'logout';
+      btn.disabled = false;
+      loadAuthSubs(s.subscriptionId);   // populate the active-subscription picker
+    } else {
+      status.textContent = s ? 'Not signed in' : 'Server offline';
+      status.className = 'auth-status off';
+      btn.textContent = 'Sign in';
+      btn.className = 'auth-btn';
+      btn.dataset.mode = 'login';
+      btn.disabled = !s;           // can't sign in if the server isn't reachable
+      sub.style.display = 'none';
+    }
+  }
+
+  // Populate the active-subscription dropdown so the user can switch context
+  // entirely from the browser — no Set-AzContext / Select-AzSubscription at the CLI.
+  async function loadAuthSubs(currentId) {
+    const sel = document.getElementById('authSub');
+    try {
+      const r = await fetch('/api/subscriptions');
+      if (!r.ok) { sel.style.display = 'none'; return; }
+      const data = await r.json();
+      const subs = Array.isArray(data.subscriptions) ? data.subscriptions
+                 : (data.subscriptions ? [data.subscriptions] : []);
+      if (!subs.length) { sel.style.display = 'none'; return; }
+      sel.innerHTML = '';
+      subs.forEach(su => {
+        const o = document.createElement('option');
+        o.value = su.Id; o.textContent = su.Name;
+        sel.appendChild(o);
+      });
+      if (currentId) sel.value = currentId;
+      sel.style.display = '';
+    } catch { sel.style.display = 'none'; }
+  }
+
+  async function onSubChange() {
+    const sel = document.getElementById('authSub');
+    sel.disabled = true;
+    try {
+      const r = await fetch('/api/auth/subscription', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionId: sel.value })
+      });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); alert('Could not switch subscription: ' + (e.error || 'unknown error')); }
+    } catch { alert('Could not reach the dashboard server.'); }
+    sel.disabled = false;
+  }
+
+  async function onAuthClick() {
+    const btn = document.getElementById('authBtn');
+    const status = document.getElementById('authStatus');
+    const mode = btn.dataset.mode;
+    if (mode === 'logout') {
+      // Signing out stops the dashboard server, so confirm before doing it.
+      if (!confirm('Sign out and stop the dashboard?\n\nThe server will shut down — restart it with ./Start-Dashboard.ps1 to use the tools again.')) {
+        return;
+      }
+      btn.disabled = true;
+      try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+      } catch {
+        /* the server may close the connection as it stops — treat as success */
+      }
+      showStopped();
+      return;
+    }
+    btn.disabled = true;
+    try {
+      btn.textContent = 'Check your browser…';
+      status.textContent = 'Awaiting Azure sign-in…';
+      status.className = 'auth-status off';
+      const r = await fetch('/api/auth/login', { method: 'POST' });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        alert('Sign-in failed: ' + (e.error || 'unknown error'));
+      }
+    } catch {
+      alert('Could not reach the dashboard server.');
+    }
+    refreshAuth();
+  }
+
+  // Terminal state after sign-out: the server has stopped, so don't poll it.
+  function showStopped() {
+    const status = document.getElementById('authStatus');
+    const btn = document.getElementById('authBtn');
+    const sub = document.getElementById('authSub');
+    status.textContent = 'Signed out — dashboard stopped';
+    status.className = 'auth-status off';
+    btn.textContent = 'Stopped';
+    btn.className = 'auth-btn';
+    btn.disabled = true;
+    sub.style.display = 'none';
+  }
+
+  refreshAuth();
+
+  // Pull the last idle scan so the hub card reflects live state, turning the
+  // landing page into a real dashboard rather than a static menu.
+  (async () => {
+    try {
+      const r = await fetch('/api/results');
+      if (!r.ok) return;
+      const json = await r.json();
+      const meta = json.ScanMetadata;
+      const rgs  = Array.isArray(json.ResourceGroups) ? json.ResourceGroups
+                 : (json.ResourceGroups ? [json.ResourceGroups] : []);
+      if (!meta || !rgs.length) return;
+
+      const flagged = rgs.filter(r => r.IsFlagged).length;
+      const currency = (rgs.find(r => r.Cost && r.Cost.Currency) || {}).Cost?.Currency || 'USD';
+      const savings = rgs.reduce((s, r) => s + ((r.RecommendedAction && r.RecommendedAction.PotentialSavings) || 0), 0);
+      const when = meta.ScanTime ? new Date(meta.ScanTime) : null;
+      const ago = when ? relativeTime(when) : '';
+
+      const fmtMoney = v => v.toLocaleString('en-US', { style: 'currency', currency, maximumFractionDigits: 0 });
+      const el = document.getElementById('idleStats');
+      el.innerHTML =
+        `<span class="stat flagged"><b>${flagged}</b> flagged</span>` +
+        (savings > 0 ? `<span class="stat savings"><b>${fmtMoney(savings)}</b>/mo potential</span>` : '') +
+        (ago ? `<span class="stat">scanned ${ago}</span>` : '');
+      el.hidden = false;
+    } catch { /* server not running — leave card static */ }
+  })();
+
+  // Live state for the Privileged Access Scanner card.
+  (async () => {
+    try {
+      const r = await fetch('/api/pa/results');
+      if (!r.ok) return;
+      const json = await r.json();
+      const meta = json.ScanMetadata;
+      if (!meta) return;
+      const when = meta.ScanTime ? new Date(meta.ScanTime) : null;
+      const ago = when ? relativeTime(when) : '';
+      const el = document.getElementById('paStats');
+      el.innerHTML =
+        `<span class="stat flagged"><b>${meta.TotalAssignments ?? 0}</b> assignments</span>` +
+        (meta.OrphanedAssignments ? `<span class="stat flagged"><b>${meta.OrphanedAssignments}</b> orphaned</span>` : '') +
+        (ago ? `<span class="stat">scanned ${ago}</span>` : '');
+      el.hidden = false;
+    } catch { /* server not running — leave card static */ }
+  })();
+
+  // Live state for the Entra User Scanner card.
+  (async () => {
+    try {
+      const r = await fetch('/api/entra/results');
+      if (!r.ok) return;
+      const json = await r.json();
+      const meta = json.ScanMetadata;
+      if (!meta) return;
+      const when = meta.ScanTime ? new Date(meta.ScanTime) : null;
+      const ago = when ? relativeTime(when) : '';
+      const el = document.getElementById('entraStats');
+      el.innerHTML =
+        `<span class="stat"><b>${meta.TotalUsers ?? 0}</b> users</span>` +
+        (meta.OrphanedUsers ? `<span class="stat flagged"><b>${meta.OrphanedUsers}</b> orphaned</span>` : '') +
+        (ago ? `<span class="stat">scanned ${ago}</span>` : '');
+      el.hidden = false;
+    } catch { /* server not running — leave card static */ }
+  })();
+
+  // Live state for the Tag Auditor card.
+  (async () => {
+    try {
+      const r = await fetch('/api/tags/results');
+      if (!r.ok) return;
+      const json = await r.json();
+      const meta = json.ScanMetadata;
+      if (!meta) return;
+      const when = meta.ScanTime ? new Date(meta.ScanTime) : null;
+      const ago = when ? relativeTime(when) : '';
+      const el = document.getElementById('tagStats');
+      el.innerHTML =
+        `<span class="stat"><b>${meta.CompliancePercent ?? 0}%</b> compliant</span>` +
+        (meta.NonCompliantCount ? `<span class="stat flagged"><b>${meta.NonCompliantCount}</b> non-compliant</span>` : '') +
+        (ago ? `<span class="stat">scanned ${ago}</span>` : '');
+      el.hidden = false;
+    } catch { /* server not running — leave card static */ }
+  })();
+
+  // Live state for the Log Analytics Cost Projector card.
+  (async () => {
+    try {
+      const r = await fetch('/api/la/results');
+      if (!r.ok) return;
+      const json = await r.json();
+      const meta = json.ScanMetadata;
+      if (!meta) return;
+      const when = meta.ScanTime ? new Date(meta.ScanTime) : null;
+      const ago = when ? relativeTime(when) : '';
+      const cur = meta.Currency || 'USD';
+      const annual = (Number(meta.TotalMonthlyCost || 0) * 12)
+        .toLocaleString('en-US', { style: 'currency', currency: cur, maximumFractionDigits: 0 });
+      const el = document.getElementById('laStats');
+      el.innerHTML =
+        `<span class="stat"><b>${meta.TableCount ?? 0}</b> tables</span>` +
+        `<span class="stat savings"><b>${annual}</b>/yr projected</span>` +
+        (ago ? `<span class="stat">projected ${ago}</span>` : '');
+      el.hidden = false;
+    } catch { /* server not running — leave card static */ }
+  })();
+
+  // Live state for the Quota Usage Scanner card.
+  (async () => {
+    try {
+      const r = await fetch('/api/quota/results');
+      if (!r.ok) return;
+      const json = await r.json();
+      const meta = json.ScanMetadata;
+      if (!meta) return;
+      const when = meta.ScanTime ? new Date(meta.ScanTime) : null;
+      const ago = when ? relativeTime(when) : '';
+      const el = document.getElementById('quotaStats');
+      el.innerHTML =
+        `<span class="stat"><b>${meta.TotalQuotas ?? 0}</b> quotas</span>` +
+        `<span class="stat flagged"><b>${meta.CriticalCount ?? 0}</b> critical</span>` +
+        (ago ? `<span class="stat">scanned ${ago}</span>` : '');
+      el.hidden = false;
+    } catch { /* server not running — leave card static */ }
+  })();
+
+  function relativeTime(d) {
+    const sec = Math.round((Date.now() - d.getTime()) / 1000);
+    if (sec < 60)   return 'just now';
+    const min = Math.round(sec / 60);
+    if (min < 60)   return `${min}m ago`;
+    const hr = Math.round(min / 60);
+    if (hr < 24)    return `${hr}h ago`;
+    const day = Math.round(hr / 24);
+    return `${day}d ago`;
+  }
+
+  // ── Theme toggle ─────────────────────────────────────────────────────────
+  function applyThemeButton() {
+    const light = document.documentElement.classList.contains('light');
+    document.getElementById('themeIco').textContent = light ? '☀️' : '🌙';
+    document.getElementById('themeLabel').textContent = light ? 'Light' : 'Dark';
+  }
+  function toggleTheme() {
+    const light = document.documentElement.classList.toggle('light');
+    try { localStorage.setItem('azureHub.theme', light ? 'light' : 'dark'); } catch (e) {}
+    applyThemeButton();
+  }
+  applyThemeButton();
+</script>
+
+</body>
+</html>

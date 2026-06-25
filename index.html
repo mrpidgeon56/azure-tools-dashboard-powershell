@@ -1,0 +1,2142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Azure Idle Resource Scanner</title>
+<style>
+  :root {
+    --bg:         #0f1117;
+    --surface:    #1a1d27;
+    --surface2:   #222535;
+    --border:     #2e3250;
+    --text:       #e2e8f0;
+    --muted:      #8892a4;
+    --accent:     #4f81f7;
+    --danger:     #f06a6a;
+    --warn:       #f5a623;
+    --ok:         #52c78f;
+    --cost:       #b47fe8;
+    --radius:     8px;
+    --font:       "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  /* ── Layout ── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo { font-size: 22px; }
+  .home-link { font-size: 22px; text-decoration: none; line-height: 1; }
+  h1 { font-size: 17px; font-weight: 600; letter-spacing: -.2px; }
+  h1 .crumb { color: var(--muted); text-decoration: none; }
+  h1 .crumb:hover { color: var(--accent); }
+  h1 .crumb-sep { color: var(--muted); margin: 0 2px; }
+  .header-meta { font-size: 12px; color: var(--muted); }
+  .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .scan-scope {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px 6px 12px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius); font-size: 12px;
+  }
+  .scan-scope label { color: var(--muted); white-space: nowrap; cursor: pointer; }
+  .scan-scope select {
+    padding: 2px 6px; font-size: 12px; max-width: 220px;
+    border-color: var(--accent);
+  }
+  .scan-scope select:disabled { opacity: .4; cursor: not-allowed; border-color: var(--border); }
+
+  main { padding: 24px 28px; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 16px; border-radius: var(--radius);
+    border: none; cursor: pointer; font-size: 13px; font-weight: 500;
+    transition: opacity .15s, transform .1s;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary  { background: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled)  { opacity: .85; }
+  .btn-outline  { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .btn-outline:hover:not(:disabled) { background: var(--surface2); }
+  .btn-danger   { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+  .btn-danger:hover:not(:disabled)  { background: var(--danger); color: #fff; }
+
+  /* ── Status pill ── */
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;
+  }
+  .status-pill.idle     { background: #2e3250; color: var(--muted); }
+  .status-pill.running  { background: #1e3a5c; color: #6ab8f7; }
+  .status-pill.done     { background: #1a3d2e; color: var(--ok);  }
+  .status-pill.failed   { background: #3d1a1a; color: var(--danger); }
+  .spinner {
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid rgba(106,184,247,.3);
+    border-top-color: #6ab8f7;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Progress bar ── */
+  .progress-wrap {
+    max-height: 0; overflow: hidden; opacity: 0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    transition: max-height .3s ease, opacity .3s ease, padding .3s ease;
+    padding: 0 28px;
+  }
+  .progress-wrap.active { max-height: 110px; opacity: 1; padding: 16px 28px; }
+  .progress-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .progress-label { font-size: 13px; font-weight: 500; color: var(--text); }
+  .progress-pct { font-size: 13px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .progress-track {
+    height: 8px; border-radius: 5px; background: var(--surface2);
+    border: 1px solid var(--border); overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent), #6ab8f7);
+    border-radius: 5px; transition: width .4s ease;
+  }
+  .progress-fill.indeterminate {
+    width: 35% !important;
+    animation: indeterminate 1.2s ease-in-out infinite;
+  }
+  @keyframes indeterminate {
+    0%   { margin-left: -35%; }
+    100% { margin-left: 100%; }
+  }
+  .progress-fill.done { background: linear-gradient(90deg, var(--ok), #6ee7a8); }
+  .progress-sub { font-size: 11px; color: var(--muted); margin-top: 6px; min-height: 14px; }
+
+  /* ── Summary cards ── */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+  }
+  .card-label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 8px; }
+  .card-value { font-size: 28px; font-weight: 700; line-height: 1; }
+  .card-sub   { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .card.danger  .card-value { color: var(--danger); }
+  .card.warn    .card-value { color: var(--warn); }
+  .card.ok      .card-value { color: var(--ok); }
+  .card.cost    .card-value { color: var(--cost); }
+  /* Savings card — keeps the green value text, no highlighted background. */
+  .card.savings .card-value { color: var(--ok); }
+
+  /* ── Subscription heatmap (shown only for multi-subscription scans) ── */
+  .heatmap-wrap { margin-bottom: 18px; }
+  .heatmap-wrap.hidden { display: none; }
+  .heatmap-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  .heatmap-title { font-size: 13px; font-weight: 600; }
+  .heatmap-title .muted { color: var(--muted); font-weight: 400; }
+  .heatmap-legend { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .heatmap-legend .scale {
+    display: inline-block; width: 72px; height: 8px; border-radius: 4px;
+    background: linear-gradient(90deg, var(--surface2), var(--danger));
+  }
+  .heatmap-grid {
+    /* Single row: tiles share the width equally, scrolling horizontally if they
+       can't all fit at their minimum width. */
+    display: grid; grid-auto-flow: column; grid-auto-columns: minmax(140px, 1fr);
+    gap: 10px; overflow-x: auto; padding-bottom: 4px;
+  }
+  .heat-tile {
+    border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
+    cursor: pointer; color: var(--text); display: flex; flex-direction: column; gap: 4px;
+    min-height: 86px; transition: transform .12s, box-shadow .12s, border-color .12s;
+  }
+  .heat-tile:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.3); }
+  .heat-tile.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .heat-tile.zero { color: var(--muted); }
+  .heat-name  { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .heat-count { font-size: 24px; font-weight: 700; line-height: 1; }
+  .heat-sub   { font-size: 11px; opacity: .9; }
+
+  /* ── Toolbar ── */
+  .toolbar {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    margin-bottom: 16px;
+  }
+  .search-wrap { position: relative; flex: 1; min-width: 220px; max-width: 380px; }
+  .search-wrap input {
+    width: 100%; padding: 8px 12px 8px 36px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 13px;
+    outline: none;
+  }
+  .search-wrap input:focus { border-color: var(--accent); }
+  .search-icon {
+    position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+    color: var(--muted); pointer-events: none;
+  }
+  select {
+    padding: 8px 12px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 13px;
+    outline: none; cursor: pointer;
+  }
+  select:focus { border-color: var(--accent); }
+  .toggle-wrap { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-left: auto; }
+  .col-config { position: relative; }
+  .col-btn {
+    padding: 8px 12px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 13px;
+    outline: none; cursor: pointer;
+  }
+  .col-btn:hover { border-color: var(--accent); }
+  .col-menu {
+    display: none; position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 8px; min-width: 180px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  }
+  .col-menu.open { display: block; }
+  .col-menu-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    font-size: 13px; color: var(--text); border-radius: 6px; cursor: pointer;
+    user-select: none;
+  }
+  .col-menu-item:hover { background: var(--surface2); }
+  .col-menu-item input { cursor: pointer; }
+  .col-menu-item.locked { opacity: .5; cursor: not-allowed; }
+  .col-hidden { display: none !important; }
+  .toggle {
+    position: relative; width: 36px; height: 20px; cursor: pointer;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; inset: 0; background: var(--surface2);
+    border-radius: 20px; border: 1px solid var(--border);
+    transition: background .2s;
+  }
+  .slider::before {
+    content: ""; position: absolute;
+    width: 14px; height: 14px; left: 2px; top: 2px;
+    background: var(--muted); border-radius: 50%; transition: transform .2s, background .2s;
+  }
+  .toggle input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+  .toggle input:checked + .slider::before { transform: translateX(16px); background: #fff; }
+
+  /* ── Table ── */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    padding: 11px 14px; text-align: left;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted); background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap; cursor: pointer; user-select: none;
+  }
+  thead th:hover { color: var(--text); }
+  thead th.sort-asc, thead th.sort-desc { color: var(--accent); }
+  thead th.sort-asc::after  { content: " ▲"; font-size: 9px; }
+  thead th.sort-desc::after { content: " ▼"; font-size: 9px; }
+  thead th .sort-indicator { margin-left: 4px; opacity: .5; }
+  thead th.sorted .sort-indicator { opacity: 1; color: var(--accent); }
+
+  /* ── per-column header filter ── */
+  thead th .filter-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-left: 6px; padding: 1px 3px; border-radius: 4px;
+    color: var(--muted); vertical-align: middle; cursor: pointer;
+  }
+  thead th .filter-icon:hover { background: var(--surface); color: var(--text); }
+  thead th .filter-icon svg { width: 11px; height: 11px; fill: currentColor; }
+  thead th .filter-icon.active { color: var(--accent); }
+  thead th .filter-icon.open { background: var(--surface); color: var(--text); }
+  thead th .filter-icon .filter-count {
+    margin-left: 3px; font-size: 9px; font-weight: 700; line-height: 1;
+    background: var(--accent); color: #fff; border-radius: 7px; padding: 1px 4px;
+  }
+
+  .col-filter-pop {
+    position: absolute; z-index: 200; min-width: 200px; max-width: 300px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.45);
+  }
+  .col-filter-pop .pop-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted); margin-bottom: 8px;
+  }
+  .col-filter-pop .pop-opts { max-height: 280px; overflow-y: auto; }
+  .col-filter-pop .pop-opt {
+    display: flex; align-items: center; gap: 8px; padding: 5px 4px;
+    font-size: 13px; color: var(--text); cursor: pointer; border-radius: 5px;
+    white-space: normal; text-transform: none; letter-spacing: 0;
+  }
+  .col-filter-pop .pop-opt:hover { background: var(--surface2); }
+  .col-filter-pop .pop-opt input { accent-color: var(--accent); cursor: pointer; margin: 0; }
+  .col-filter-pop .pop-empty { font-size: 12px; color: var(--muted); padding: 4px; }
+  .col-filter-pop .pop-foot {
+    display: flex; justify-content: flex-end; margin-top: 8px;
+    padding-top: 8px; border-top: 1px solid var(--border);
+  }
+  .col-filter-pop .pop-clear {
+    background: none; border: none; color: var(--accent); font-family: var(--font);
+    font-size: 12px; cursor: pointer; padding: 2px 4px;
+  }
+  .col-filter-pop .pop-clear:hover { text-decoration: underline; }
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background .1s;
+  }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface2); }
+  tbody tr.flagged { border-left: 3px solid var(--danger); }
+  tbody tr.flagged td:first-child { padding-left: 11px; }
+  td { padding: 11px 14px; vertical-align: middle; }
+
+  /* ── Cell types ── */
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+  }
+  .badge-flag   { background: rgba(240,106,106,.15); color: var(--danger); }
+  .badge-ok     { background: rgba(82,199,143,.12);  color: var(--ok);    }
+  .signal-grid  { display: flex; gap: 5px; flex-wrap: wrap; }
+  .sig {
+    padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 500;
+  }
+  .sig-on  { background: rgba(82,199,143,.12); color: var(--ok);    }
+  .sig-off { background: rgba(240,106,106,.10); color: #f06a6a99; }
+  .cost-val { color: var(--cost); font-weight: 600; }
+  .cost-null { color: var(--muted); font-style: italic; }
+  .rg-name { font-weight: 500; }
+  .rg-badge {
+    display: inline-block; margin-left: 6px; padding: 1px 6px;
+    border-radius: 4px; font-size: 10px; font-weight: 600; vertical-align: middle;
+  }
+  .badge-managed { background: rgba(79,129,247,.15); color: #7aa2f7; }
+  .badge-lock    { background: rgba(245,166,35,.15);  color: var(--warn); }
+  .badge-orphan  { background: rgba(180,127,232,.18); color: var(--cost); }
+  /* ── Recommendation cell ── */
+  .rec-action { display: flex; flex-direction: column; gap: 3px; }
+  .act-chip {
+    display: inline-block; padding: 3px 9px; border-radius: 4px;
+    font-size: 11px; font-weight: 600; width: fit-content;
+  }
+  .act-keep   { background: rgba(82,199,143,.12); color: var(--ok); }
+  .act-review { background: rgba(245,166,35,.15);  color: var(--warn); }
+  .act-delete { background: rgba(240,106,106,.15); color: var(--danger); }
+  .act-clean  { background: rgba(180,127,232,.18); color: var(--cost); }
+  .act-decom  { background: rgba(79,129,247,.15);  color: #7aa2f7; }
+  .rec-savings { font-size: 10px; color: var(--cost); font-weight: 600; }
+  .sub-name { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .owner-tag { font-size: 12px; color: var(--muted); }
+  .resource-types { font-size: 11px; color: var(--muted); max-width: 200px; }
+  .location-badge {
+    padding: 2px 7px; border-radius: 4px; font-size: 11px;
+    background: var(--surface2); color: var(--muted);
+  }
+  /* ── Advisor cell ── */
+  .advisor-cell { display: flex; align-items: center; gap: 8px; }
+  .advisor-score {
+    display: flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; border-radius: 50%;
+    font-size: 11px; font-weight: 700; flex-shrink: 0;
+    border: 2px solid;
+  }
+  .advisor-score.high   { border-color: var(--ok);     color: var(--ok);     background: rgba(82,199,143,.08); }
+  .advisor-score.medium { border-color: var(--warn);   color: var(--warn);   background: rgba(245,166,35,.08); }
+  .advisor-score.low    { border-color: var(--danger);  color: var(--danger); background: rgba(240,106,106,.08); }
+  .advisor-score.none   { border-color: var(--border); color: var(--muted);  background: transparent; }
+  .advisor-recs { display: flex; flex-direction: column; gap: 2px; }
+  .rec-pill {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;
+  }
+  .rec-high   { background: rgba(240,106,106,.15); color: var(--danger); }
+  .rec-medium { background: rgba(245,166,35,.15);  color: var(--warn);  }
+  .rec-low    { background: rgba(82,199,143,.12);  color: var(--ok);    }
+  .rec-none   { color: var(--muted); font-size: 11px; }
+
+  .no-data {
+    text-align: center; padding: 48px 20px; color: var(--muted);
+  }
+  .no-data-icon { font-size: 32px; margin-bottom: 10px; }
+
+  /* ── Detail panel ── */
+  .detail-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: flex; align-items: flex-end; justify-content: flex-end;
+    z-index: 100; opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .detail-overlay.open { opacity: 1; pointer-events: all; }
+  .detail-panel {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    border-top: 1px solid var(--border);
+    width: 440px; height: 100vh; overflow-y: auto;
+    padding: 24px;
+    transform: translateX(100%); transition: transform .2s;
+  }
+  .detail-overlay.open .detail-panel { transform: translateX(0); }
+  .detail-close {
+    float: right; background: none; border: none; color: var(--muted);
+    font-size: 20px; cursor: pointer; line-height: 1;
+  }
+  .detail-close:hover { color: var(--text); }
+  .detail-section { margin-bottom: 24px; }
+  .detail-section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 10px; }
+  .detail-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-key { color: var(--muted); }
+  .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag-chip {
+    padding: 3px 9px; border-radius: 4px; font-size: 11px;
+    background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+  }
+  .tag-chip strong { color: var(--text); }
+
+  /* ── Errors section ── */
+  .errors-section {
+    margin-top: 20px; padding: 14px 16px;
+    background: rgba(240,106,106,.06); border: 1px solid rgba(240,106,106,.2);
+    border-radius: var(--radius);
+  }
+  .errors-section summary { cursor: pointer; color: var(--danger); font-size: 13px; }
+  .errors-section ul { margin-top: 8px; padding-left: 18px; font-size: 12px; color: var(--muted); }
+  .errors-section li { margin-top: 4px; }
+
+  /* ── Toast ── */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--surface2); border: 1px solid var(--border);
+    padding: 10px 20px; border-radius: 8px; font-size: 13px;
+    opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; z-index: 200;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ── Scan-settings popover (single-sub + evaluation window live here) ── */
+  .scan-settings { position: relative; }
+  .scan-pop {
+    display: none; position: absolute; right: 0; top: calc(100% + 8px); z-index: 60;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; min-width: 280px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.45);
+  }
+  .scan-pop.open { display: block; }
+  .scan-pop h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 12px; }
+  .scan-pop .field { margin-bottom: 14px; }
+  .scan-pop .field:last-child { margin-bottom: 0; }
+  .scan-pop .field-label { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; }
+  .scan-pop select { width: 100%; }
+  .scan-pop .hint { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+
+  /* ── Filter summary / clear bar ── */
+  .filter-summary {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: -4px 0 16px; font-size: 12px; color: var(--muted); min-height: 18px;
+  }
+  .filter-summary .count b { color: var(--text); font-weight: 600; }
+  .filter-summary .clear-filters {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: 12px; font-weight: 600; padding: 0; text-decoration: underline;
+  }
+  .filter-summary .clear-filters:hover { opacity: .8; }
+
+  /* ── Export button: distinguish from the settings-style ⚙ Columns button ── */
+  .col-btn.export-btn { color: var(--accent); border-color: rgba(79,129,247,.4); }
+  .col-btn.export-btn:hover { border-color: var(--accent); background: rgba(79,129,247,.08); }
+
+  /* ── Resting-state sort hint on every sortable header ── */
+  thead th .sort-indicator { margin-left: 4px; opacity: .35; font-size: 9px; }
+  thead th:hover .sort-indicator { opacity: .7; }
+  thead th.sort-asc .sort-indicator, thead th.sort-desc .sort-indicator { display: none; }
+
+  /* ── Row "open details" affordance ── */
+  .row-go { float: right; color: var(--muted); opacity: 0; transition: opacity .12s, transform .12s; padding-left: 8px; }
+  tbody tr:hover .row-go { opacity: 1; transform: translateX(2px); }
+
+  /* ── Triage state (acknowledge / snooze / dismiss) ── */
+  tbody tr.dismissed { opacity: .45; }
+  .triage-badge {
+    display: inline-block; margin-left: 6px; padding: 1px 6px;
+    border-radius: 4px; font-size: 10px; font-weight: 600; vertical-align: middle;
+  }
+  .triage-acknowledged { background: rgba(82,199,143,.15); color: var(--ok); }
+  .triage-snoozed      { background: rgba(245,166,35,.15); color: var(--warn); }
+  .triage-dismissed    { background: var(--surface2); color: var(--muted); }
+  .triage-controls { display: flex; gap: 6px; flex-wrap: wrap; }
+  .triage-btn {
+    flex: 1; min-width: 70px; padding: 7px 8px; font-size: 12px; cursor: pointer;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); transition: border-color .12s, background .12s;
+  }
+  .triage-btn:hover { border-color: var(--accent); }
+  .triage-btn.active { border-color: var(--accent); background: rgba(79,129,247,.12); color: #fff; }
+
+  /* ── Detail panel navigation ── */
+  .detail-nav { display: flex; align-items: center; gap: 6px; }
+  .detail-nav button {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .detail-nav button:hover:not(:disabled) { border-color: var(--accent); }
+  .detail-nav button:disabled { opacity: .35; cursor: not-allowed; }
+  .detail-nav .pos { font-size: 11px; color: var(--muted); min-width: 54px; text-align: center; }
+
+  /* ── Empty-state primary CTA ── */
+  .no-data .empty-cta {
+    margin-top: 16px; display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 20px; border-radius: var(--radius);
+    background: var(--accent); color: #fff; border: none; cursor: pointer;
+    font-size: 14px; font-weight: 600;
+  }
+  .no-data .empty-cta:hover:not(:disabled) { opacity: .88; }
+  .no-data .empty-cta:disabled { opacity: .45; cursor: not-allowed; }
+  /* Hide the working chrome until there is data to act on. */
+  body.needs-data .cards,
+  body.needs-data .toolbar,
+  body.needs-data .filter-summary { display: none; }
+
+  /* ── Refresh loading shimmer ── */
+  .table-wrap.loading { position: relative; }
+  .table-wrap.loading::after {
+    content: ""; position: absolute; inset: 0; z-index: 5;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.04), transparent);
+    background-size: 200% 100%; animation: shimmer 1s linear infinite; pointer-events: none;
+  }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  /* ── Pagination ── */
+  .pager {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    margin-top: 14px; font-size: 13px; color: var(--muted); flex-wrap: wrap;
+  }
+  .pager .pg-info { min-width: 160px; text-align: center; }
+  .pager .pg-info b { color: var(--text); font-weight: 600; }
+  .pager button {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    min-width: 32px; height: 32px; padding: 0 10px; border-radius: 6px; cursor: pointer;
+    font-size: 13px; transition: border-color .12s, background .12s;
+  }
+  .pager button:hover:not(:disabled) { border-color: var(--accent); background: var(--surface2); }
+  .pager button:disabled { opacity: .35; cursor: not-allowed; }
+  .pager button.current { border-color: var(--accent); background: rgba(79,129,247,.12); color: #fff; font-weight: 600; }
+  .pager .pg-ellipsis { padding: 0 2px; }
+
+  /* ── Responsive ── */
+  .table-wrap { overflow-x: auto; }
+  table { min-width: 880px; }
+  @media (max-width: 640px) {
+    main { padding: 16px; }
+    .detail-panel { width: 100vw; padding: 18px; }
+    header { padding: 12px 16px; }
+  }
+
+  /* ── light theme (toggled via .light on <html>) ──────────────── */
+  html.light {
+    --bg:       #f4f6fb;
+    --surface:  #ffffff;
+    --surface2: #eef1f7;
+    --border:   #d4d9e6;
+    --text:     #1c2230;
+    --muted:    #5c6679;
+    --accent:   #3a6ae0;
+  }
+  /* ── theme toggle (fixed, bottom-left) ───────────────────────── */
+  .theme-toggle {
+    position: fixed; left: 18px; bottom: 18px; z-index: 50;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 8px 14px; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    transition: border-color .15s, background .15s, color .15s;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle .ico { font-size: 15px; line-height: 1; }
+</style>
+<script>
+  // Apply the saved theme before first paint to avoid a flash of the wrong theme.
+  (function () {
+    try { if (localStorage.getItem('azureHub.theme') === 'light') document.documentElement.classList.add('light'); } catch (e) {}
+  })();
+</script>
+</head>
+<body class="needs-data">
+
+<header>
+  <div class="header-left">
+    <a href="/" class="home-link" title="Back to Azure Engineering">☁️</a>
+    <div>
+      <h1><a href="/" class="crumb">Azure Engineering</a> <span class="crumb-sep">/</span> Idle Resource Scanner</h1>
+      <div class="header-meta" id="scanMeta">No scan data loaded</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <span class="status-pill idle" id="statusPill">
+      <span id="statusDot">●</span>
+      <span id="statusText">Idle</span>
+    </span>
+    <div class="scan-settings" id="scanSettings">
+      <button type="button" class="btn btn-outline" id="scanSettingsBtn" onclick="toggleScanPop(event)">⚙ Scan settings</button>
+      <div class="scan-pop" id="scanPop">
+        <h4>Next scan parameters</h4>
+        <div class="field">
+          <label class="field-label" for="scopeToggle">
+            <input type="checkbox" id="scopeToggle" onchange="onScopeToggle()" />
+            Limit to a single subscription
+          </label>
+          <select id="scopeSub" disabled>
+            <option value="">— pick after first scan —</option>
+          </select>
+          <div class="hint">Faster — scans only the selected subscription.</div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="lookbackDays">Evaluation window</label>
+          <select id="lookbackDays">
+            <option value="7">7 days</option>
+            <option value="14" selected>14 days</option>
+            <option value="21">21 days</option>
+            <option value="30">30 days</option>
+            <option value="60">60 days</option>
+            <option value="90">90 days</option>
+          </select>
+          <div class="hint">Applies to the next scan — the activity/cost window is queried from Azure, so it can't re-filter results already on screen.</div>
+        </div>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="scanBtn" onclick="startScan()">
+      ▶ Run Scan
+    </button>
+    <button class="btn btn-danger" id="cancelBtn" onclick="cancelScan()" style="display:none">
+      ✕ Cancel
+    </button>
+    <button class="btn btn-outline" id="refreshBtn" onclick="loadResults(true)">↻ Refresh</button>
+  </div>
+</header>
+
+<!-- Live scan progress -->
+<div class="progress-wrap" id="progressWrap">
+  <div class="progress-head">
+    <span class="progress-label" id="progressLabel">Starting scan…</span>
+    <span class="progress-pct" id="progressPct">0%</span>
+  </div>
+  <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+  <div class="progress-sub" id="progressSub"></div>
+</div>
+
+<main>
+  <!-- Summary cards -->
+  <div class="cards" id="cards">
+    <div class="card"><div class="card-label">Subscriptions</div><div class="card-value" id="cSubs">—</div></div>
+    <div class="card"><div class="card-label">Resource Groups</div><div class="card-value" id="cTotal">—</div></div>
+    <div class="card"><div class="card-label">Resources Scanned</div><div class="card-value" id="cResources">—</div><div class="card-sub" id="cResourcesSub"></div></div>
+    <div class="card danger"><div class="card-label">Flagged Idle</div><div class="card-value" id="cFlagged">—</div><div class="card-sub" id="cFlaggedPct"></div></div>
+    <div class="card"><div class="card-label">Errors</div><div class="card-value" id="cErrors">—</div></div>
+    <div class="card savings"><div class="card-label">Potential Savings / mo</div><div class="card-value" id="cSavings">—</div><div class="card-sub" id="cSavingsSub"></div></div>
+  </div>
+
+  <!-- Subscription heatmap (multi-subscription scans only) -->
+  <div class="heatmap-wrap hidden" id="heatmap">
+    <div class="heatmap-head">
+      <div class="heatmap-title">Flagged for removal by subscription <span class="muted" id="heatmapHint">— click a tile to filter</span></div>
+      <div class="heatmap-legend"><span>fewer</span><span class="scale"></span><span>more</span></div>
+    </div>
+    <div class="heatmap-grid" id="heatmapGrid"></div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="search" placeholder="Search resource groups, subscriptions, owners…" oninput="goToPage(1)"/>
+    </div>
+    <select id="subFilter" onchange="goToPage(1); renderHeatmap()">
+      <option value="">All Subscriptions</option>
+    </select>
+    <label class="toggle-wrap">
+      <label class="toggle">
+        <input type="checkbox" id="flaggedOnly" onchange="goToPage(1)" />
+        <span class="slider"></span>
+      </label>
+      Flagged only
+    </label>
+    <button type="button" class="col-btn" id="copyCmdBtn" onclick="copyDeleteCommands()" title="Copy Azure CLI delete commands for the flagged rows currently shown.">⧉ Copy delete cmds</button>
+    <div class="col-config" id="colConfig">
+      <button type="button" class="col-btn" id="colBtn" onclick="toggleColMenu(event)">⚙ Columns</button>
+      <div class="col-menu" id="colMenu"></div>
+    </div>
+    <button type="button" class="col-btn export-btn" id="exportBtn" onclick="exportCsv()">⬇ Export CSV</button>
+  </div>
+
+  <!-- Active-filter summary + clear -->
+  <div class="filter-summary" id="filterSummary"></div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-col="rg">Resource Group<span class="sort-indicator">⇅</span></th>
+          <th data-col="location">Location<span class="sort-indicator">⇅</span></th>
+          <th data-col="resources">Resources<span class="sort-indicator">⇅</span></th>
+          <th data-col="signals" title="Three idle-detection signals per resource group. A group is only flagged idle when ALL three are inactive (✗): no Activity Log writes, no platform metrics, and no recent modification — and it isn't a managed/system group. Hover each chip for details.">Activity Signals<span class="sort-indicator">⇅</span></th>
+          <th data-col="cost">Est. Cost / mo<span class="sort-indicator">⇅</span></th>
+          <th data-col="updated" title="Most recent resource configuration change time in this resource group.">Last Updated<span class="sort-indicator">⇅</span></th>
+          <th data-col="updatedBy" title="Principal that performed the most recent write/delete in the Activity Log.">Updated By<span class="sort-indicator">⇅</span></th>
+          <th data-col="owner">Owner<span class="sort-indicator">⇅</span></th>
+          <th data-col="recommendation" title="Suggested action derived from idle signals, locks, managed-RG detection, orphaned resources, and cost.">Recommendation<span class="sort-indicator">⇅</span></th>
+          <th data-col="status">Status<span class="sort-indicator">⇅</span></th>
+          <th data-col="advisor" title="Recommendation count from Azure Advisor. Score shown is the subscription-level Advisor score (0–100).">Advisor<span class="sort-indicator">⇅</span></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <tr><td colspan="11" class="no-data">
+          <div class="no-data-icon">📭</div>
+          <div>No scan data yet. Run a scan to discover idle resource groups.</div>
+          <button class="empty-cta" id="emptyScanBtn" onclick="startScan()">▶ Run Scan</button>
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div class="pager" id="pager" style="display:none"></div>
+
+  <!-- Errors -->
+  <div id="errorsSection" style="display:none"></div>
+</main>
+
+<!-- Column-filter popover (anchored to the clicked header funnel icon) -->
+<div id="colFilterPop" class="col-filter-pop" hidden></div>
+
+<!-- Detail panel -->
+<div class="detail-overlay" id="detailOverlay" onclick="closeDetail(event)">
+  <div class="detail-panel" id="detailPanel"></div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+let allData   = [];
+let errorData = [];
+let pollTimer = null;
+let scanStartMs = null;   // wall-clock start of the active scan, for ETA estimation
+
+// ── Column configuration ────────────────────────────────────────────────────────
+// `locked` columns can't be hidden; `def` is the default visibility.
+const COLUMNS = [
+  { key: 'rg',        label: 'Resource Group',  locked: true,  def: true },
+  { key: 'location',  label: 'Location',        def: true },
+  { key: 'resources', label: 'Resources',       def: true },
+  { key: 'signals',   label: 'Activity Signals',def: true },
+  { key: 'cost',      label: 'Est. Cost / mo',  def: true },
+  { key: 'updated',   label: 'Last Updated',    def: true },
+  { key: 'updatedBy', label: 'Updated By',      def: true },
+  { key: 'owner',     label: 'Owner',           def: false },   // hidden by default
+  { key: 'recommendation', label: 'Recommendation', def: true },
+  { key: 'status',    label: 'Status',          locked: true,  def: true },
+  { key: 'advisor',   label: 'Advisor',         def: true },
+];
+const COL_STORAGE_KEY = 'azureIdle.columns';
+let colVisible = {};
+
+function loadColumnPrefs() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(COL_STORAGE_KEY)) || {}; } catch {}
+  colVisible = {};
+  COLUMNS.forEach(c => {
+    colVisible[c.key] = c.locked ? true
+      : (typeof saved[c.key] === 'boolean' ? saved[c.key] : c.def);
+  });
+}
+
+function saveColumnPrefs() {
+  try { localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(colVisible)); } catch {}
+}
+
+function buildColumnMenu() {
+  const menu = document.getElementById('colMenu');
+  menu.innerHTML = COLUMNS.map(c => `
+    <label class="col-menu-item ${c.locked ? 'locked' : ''}">
+      <input type="checkbox" data-colkey="${c.key}" ${colVisible[c.key] ? 'checked' : ''} ${c.locked ? 'disabled' : ''}
+             onchange="onColToggle('${c.key}', this.checked)" />
+      ${c.label}
+    </label>`).join('');
+}
+
+function onColToggle(key, checked) {
+  colVisible[key] = checked;
+  saveColumnPrefs();
+  applyColumnVisibility();
+}
+
+// Show/hide every th + td carrying the matching data-col attribute.
+function applyColumnVisibility() {
+  Object.entries(colVisible).forEach(([key, vis]) => {
+    document.querySelectorAll(`[data-col="${key}"]`).forEach(el => {
+      el.classList.toggle('col-hidden', !vis);
+    });
+  });
+}
+
+function toggleColMenu(e) {
+  e.stopPropagation();
+  document.getElementById('colMenu').classList.toggle('open');
+}
+function toggleScanPop(e) {
+  e.stopPropagation();
+  document.getElementById('scanPop').classList.toggle('open');
+}
+document.addEventListener('click', (e) => {
+  const cfg = document.getElementById('colConfig');
+  if (cfg && !cfg.contains(e.target)) document.getElementById('colMenu').classList.remove('open');
+  const settings = document.getElementById('scanSettings');
+  if (settings && !settings.contains(e.target)) document.getElementById('scanPop').classList.remove('open');
+});
+
+// ── Per-column header filters ───────────────────────────────────────────────────
+// Each filterable column gets a funnel icon in its header that opens a multi-select
+// popover. Selections live in `colFilters` as { colKey: [value, …] }. A column with
+// an `accessor` matches when the row's value is in the selected set; a column with a
+// `match` predicate (e.g. date buckets) decides membership itself.
+// NOTE: the accessor property is deliberately NOT named `valueOf` — that collides with
+// Object.prototype.valueOf, which exists on every object and breaks `|| fallback` checks.
+const COL_FILTERS = {
+  status: {
+    options: [['flagged', '⚠ Flagged'], ['active', '✓ Active']],
+    accessor: r => r.IsFlagged ? 'flagged' : 'active',
+  },
+  recommendation: {
+    dynamic: true,
+    accessor: r => r.RecommendedAction?.Action || '',
+  },
+  updated: {
+    options: [
+      ['7', 'Last updated ≥ 7 days ago'], ['30', 'Last updated ≥ 30 days ago'],
+      ['90', 'Last updated ≥ 90 days ago'], ['180', 'Last updated ≥ 180 days ago'],
+      ['365', 'Last updated ≥ 365 days ago'], ['none', 'No update date'],
+    ],
+    match: (r, vals) => vals.some(v => updatedBucketMatch(r, v)),
+  },
+  updatedBy: {
+    options: [
+      ['User', 'User account'], ['ServicePrincipal', 'Service principal / app'],
+      ['Other', 'Other / system'], ['none', 'No caller recorded'],
+    ],
+    accessor: r => updatedByType(r),
+  },
+};
+let colFilters = {};   // { status: ['flagged'], recommendation: ['Delete', …], … }
+
+// Classifies the principal that performed the most recent write (the Activity Log
+// "Caller") into an account type, using the RAW caller: users are recorded as a
+// UPN/email, service principals/apps as an object/app GUID. Resolved display names
+// can mask this, so we classify off LastModifiedByRaw and fall back to LastModifiedBy.
+function updatedByType(r) {
+  const raw = r.LastModifiedByRaw || r.LastModifiedBy || '';
+  if (!raw) return 'none';
+  if (/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(raw)) return 'ServicePrincipal';
+  if (raw.includes('@')) return 'User';
+  return 'Other';
+}
+
+// True when row r matches the "last updated" threshold identified by `v`:
+// the RG was last updated at least `v` days ago (age ≥ v), or has no update date.
+function updatedBucketMatch(r, v) {
+  const t = r.LastModifiedTime ? new Date(r.LastModifiedTime).getTime() : null;
+  if (v === 'none') return !t;
+  if (!t) return false;                         // a day-threshold excludes "no date"
+  const days = (Date.now() - t) / 86400000;
+  return days >= parseInt(v, 10);               // last updated ≥ N days ago
+}
+
+// [value, label] choices for a column's filter popover.
+function colFilterChoices(key) {
+  const f = COL_FILTERS[key];
+  if (f.dynamic) {
+    return [...new Set(allData.map(r => f.accessor(r)).filter(Boolean))].sort().map(v => [v, v]);
+  }
+  return f.options;
+}
+
+// Toggle one value within a column's multi-select filter; keeps the popover open.
+function toggleColValue(key, value, checked) {
+  const set = new Set(colFilters[key] || []);
+  if (checked) set.add(value); else set.delete(value);
+  if (set.size) colFilters[key] = [...set]; else delete colFilters[key];
+  currentPage = 1;
+  setupColFilterIcons();
+  renderTable();
+}
+
+// Clear just one column's filter (popover footer).
+function clearColFilter(key) {
+  delete colFilters[key];
+  currentPage = 1;
+  closeColFilter();
+  renderTable();
+}
+
+const FUNNEL_SVG = '<svg viewBox="0 0 16 16"><path d="M1 2h14l-5.4 6.4v4.2l-3.2 1.6V8.4z"/></svg>';
+
+// Ensure each filterable header has a funnel icon and reflect active/count state.
+function setupColFilterIcons() {
+  Object.keys(COL_FILTERS).forEach(key => {
+    const th = document.querySelector(`thead th[data-col="${key}"]`);
+    if (!th) return;
+    let icon = th.querySelector('.filter-icon');
+    if (!icon) {
+      icon = document.createElement('span');
+      icon.title = 'Filter';
+      icon.addEventListener('click', e => toggleColFilter(e, key));
+      th.appendChild(icon);
+    }
+    const sel = colFilters[key] || [];
+    icon.className = 'filter-icon' + (sel.length ? ' active' : '') + (openFilterKey === key ? ' open' : '');
+    icon.innerHTML = FUNNEL_SVG + (sel.length ? `<span class="filter-count">${sel.length}</span>` : '');
+  });
+}
+
+let openFilterKey = null;
+function toggleColFilter(evt, key) {
+  evt.stopPropagation();   // don't trigger the header's sort handler
+  if (openFilterKey === key) { closeColFilter(); return; }
+  const pop = document.getElementById('colFilterPop');
+  const label = COLUMNS.find(c => c.key === key)?.label || '';
+  const sel = new Set(colFilters[key] || []);
+  const choices = colFilterChoices(key);
+  const opts = choices.length
+    ? choices.map(([v, l]) =>
+        `<label class="pop-opt"><input type="checkbox" value="${esc(v)}"${sel.has(v) ? ' checked' : ''}` +
+        ` onchange="toggleColValue('${esc(key)}', this.value, this.checked)"><span>${esc(l)}</span></label>`).join('')
+    : '<div class="pop-empty">No values</div>';
+  pop.innerHTML =
+    `<div class="pop-label">Filter by ${esc(label)}</div>` +
+    `<div class="pop-opts">${opts}</div>` +
+    `<div class="pop-foot"><button type="button" class="pop-clear" onclick="clearColFilter('${esc(key)}')">Clear</button></div>`;
+  pop.hidden = false;
+  const rect = evt.currentTarget.getBoundingClientRect();
+  const popW = pop.offsetWidth;
+  let left = rect.left + window.scrollX;
+  left = Math.min(left, window.scrollX + document.documentElement.clientWidth - popW - 8);
+  pop.style.left = Math.max(8, left) + 'px';
+  pop.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+  openFilterKey = key;
+  setupColFilterIcons();   // mark the icon .open
+}
+function closeColFilter() {
+  const pop = document.getElementById('colFilterPop');
+  if (pop) { pop.hidden = true; pop.innerHTML = ''; }
+  if (openFilterKey !== null) { openFilterKey = null; setupColFilterIcons(); }
+}
+document.addEventListener('click', e => {
+  if (openFilterKey === null) return;
+  const pop = document.getElementById('colFilterPop');
+  if (pop && !pop.contains(e.target) && !e.target.closest('.filter-icon')) closeColFilter();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeColFilter(); });
+
+// ── Data loading ──────────────────────────────────────────────────────────────
+
+async function loadResults(userInitiated) {
+  const wrap = document.querySelector('.table-wrap');
+  const btn  = document.getElementById('refreshBtn');
+  if (userInitiated) {
+    if (wrap) wrap.classList.add('loading');
+    if (btn) btn.disabled = true;
+  }
+  try {
+    const r = await fetch('/api/results');
+    if (!r.ok) { if (userInitiated) showToast('Could not refresh — server returned an error.'); return; }
+    const json = await r.json();
+    applyData(json);
+    if (userInitiated) showToast('Data refreshed.');
+  } catch (e) {
+    // Server not running — silent unless the user explicitly asked.
+    if (userInitiated) showToast('Cannot reach server. Is Start-Dashboard.ps1 running?');
+  } finally {
+    if (wrap) wrap.classList.remove('loading');
+    if (btn) btn.disabled = false;
+  }
+}
+
+// PowerShell's ConvertTo-Json serializes a single-element collection as a bare
+// scalar (string/object) instead of an array. Normalize those fields back to
+// arrays so the rendering code can safely call .map()/.slice() on them.
+function asArray(v) {
+  if (v == null) return [];
+  return Array.isArray(v) ? v : [v];
+}
+
+function applyData(json) {
+  if (!json || !json.ResourceGroups) return;
+  allData   = asArray(json.ResourceGroups).map(r => ({
+    ...r,
+    ResourceTypes:     asArray(r.ResourceTypes),
+    Warnings:          asArray(r.Warnings),
+    Locks:             asArray(r.Locks),
+    OrphanedResources: asArray(r.OrphanedResources),
+  }));
+  errorData = asArray(json.Errors);
+
+  const meta = json.ScanMetadata;
+  if (meta) {
+    const dt = meta.ScanTime ? new Date(meta.ScanTime).toLocaleString() : '';
+    document.getElementById('scanMeta').textContent =
+      `Last scan: ${dt}  ·  Lookback: ${meta.LookbackDays}d  ·  ` +
+      `${meta.SubscriptionsScanned} subscriptions`;
+    // Sync the window selector to the data actually on screen so it never
+    // misrepresents the lookback the displayed results were scanned with.
+    const sel = document.getElementById('lookbackDays');
+    if (sel && meta.LookbackDays != null &&
+        [...sel.options].some(o => +o.value === +meta.LookbackDays)) {
+      sel.value = String(meta.LookbackDays);
+    }
+  }
+
+  // Hide the working chrome (cards/toolbar/filters) until there's data to act on.
+  document.body.classList.toggle('needs-data', allData.length === 0);
+
+  updateCards(meta);
+  populateSubFilter();
+  setupColFilterIcons();
+  renderHeatmap();
+  renderTable();
+  renderErrors();
+}
+
+// ── Subscription heatmap ────────────────────────────────────────────────────────
+// Shown only when the scan covered more than one subscription (an "all subscriptions"
+// scan). Each tile is a subscription, coloured by how many of its resource groups are
+// flagged for removal relative to the busiest subscription. Clicking a tile filters
+// the table to that subscription (clicking the active tile clears the filter).
+function renderHeatmap() {
+  const wrap = document.getElementById('heatmap');
+  const grid = document.getElementById('heatmapGrid');
+
+  const bySub = new Map();
+  for (const r of allData) {
+    const id = r.SubscriptionId;
+    if (!bySub.has(id)) bySub.set(id, { id, name: r.SubscriptionName || id, total: 0, flagged: 0, savings: 0, currency: 'USD' });
+    const e = bySub.get(id);
+    e.total++;
+    if (r.IsFlagged) e.flagged++;
+    const sv = r.RecommendedAction?.PotentialSavings ?? 0;
+    if (sv > 0) e.savings += sv;
+    if (r.Cost?.Currency) e.currency = r.Cost.Currency;
+  }
+
+  const subs = [...bySub.values()];
+  if (subs.length <= 1) { wrap.classList.add('hidden'); return; }   // single-sub scan → no heatmap
+  wrap.classList.remove('hidden');
+
+  const maxFlagged = Math.max(...subs.map(s => s.flagged), 1);
+  subs.sort((a, b) => b.flagged - a.flagged || b.savings - a.savings || a.name.localeCompare(b.name));
+
+  const activeId = document.getElementById('subFilter').value;
+  grid.innerHTML = subs.map(s => {
+    // Intensity floors at 0.18 so even lightly-flagged subs read as "warm", not invisible.
+    const intensity = s.flagged === 0 ? 0 : 0.18 + 0.82 * (s.flagged / maxFlagged);
+    const bg  = s.flagged === 0 ? 'var(--surface)' : `rgba(240,106,106,${intensity.toFixed(3)})`;
+    const sv  = s.savings > 0
+      ? s.savings.toLocaleString('en-US', { style: 'currency', currency: s.currency, maximumFractionDigits: 0 })
+      : null;
+    const pct = s.total ? Math.round(s.flagged / s.total * 100) : 0;
+    const cls = `heat-tile${s.id === activeId ? ' active' : ''}${s.flagged === 0 ? ' zero' : ''}`;
+    const tip = `${s.name} — ${s.flagged} of ${s.total} RGs flagged${sv ? `, ${sv}/mo potential savings` : ''}`;
+    return `<div class="${cls}" style="background:${bg}" title="${esc(tip)}" onclick="toggleSubFromHeatmap('${esc(s.id)}')">
+      <div class="heat-name">${esc(s.name)}</div>
+      <div class="heat-count">${s.flagged}</div>
+      <div class="heat-sub">${pct}% of ${s.total} RG${s.total === 1 ? '' : 's'}${sv ? ` · ${sv}/mo` : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+// Filter the table to a subscription from a heatmap tile (toggles off if already active).
+function toggleSubFromHeatmap(id) {
+  const sel = document.getElementById('subFilter');
+  sel.value = (sel.value === id) ? '' : id;
+  currentPage = 1;
+  renderTable();
+  renderHeatmap();   // refresh the active-tile outline
+}
+
+function updateCards(meta) {
+  const flagged = allData.filter(r => r.IsFlagged);
+  const currency  = allData.find(r => r.Cost?.Currency)?.Cost?.Currency ?? 'USD';
+  const pct = allData.length ? Math.round(flagged.length / allData.length * 100) : 0;
+  const subs = [...new Set(allData.map(r => r.SubscriptionId))].length;
+
+  // Total individual Azure resources across all scanned resource groups.
+  const totalResources = allData.reduce((s, r) => s + (r.ResourceCount ?? 0), 0);
+
+  set('cSubs',      subs || (meta?.SubscriptionsScanned ?? '—'));
+  set('cTotal',     allData.length || '—');
+  set('cResources', allData.length ? totalResources.toLocaleString('en-US') : '—');
+  set('cResourcesSub', allData.length
+    ? `across ${allData.length.toLocaleString('en-US')} resource group${allData.length === 1 ? '' : 's'}`
+    : '');
+  set('cFlagged',   flagged.length);
+  set('cFlaggedPct', `${pct}% of all resource groups`);
+  set('cErrors',    errorData.length);
+
+  // Estimated savings from cleanup: sum of per-RG recommended-action potential savings.
+  const savingsRows = allData.filter(r => (r.RecommendedAction?.PotentialSavings ?? 0) > 0);
+  const savings = savingsRows.reduce((s, r) => s + (r.RecommendedAction.PotentialSavings ?? 0), 0);
+  set('cSavings', savings
+    ? savings.toLocaleString('en-US', { style: 'currency', currency, maximumFractionDigits: 0 })
+    : '—');
+  set('cSavingsSub', savings
+    ? `across ${savingsRows.length} resource group${savingsRows.length === 1 ? '' : 's'}`
+    : 'no actionable cost found');
+}
+
+function populateSubFilter() {
+  const subs = [...new Map(allData.map(r => [r.SubscriptionId, r.SubscriptionName])).entries()]
+    .sort((a,b) => a[1].localeCompare(b[1]));
+
+  // table filter dropdown
+  const sel  = document.getElementById('subFilter');
+  const curr = sel.value;
+  sel.innerHTML = '<option value="">All Subscriptions</option>';
+  subs.forEach(([id, name]) => {
+    const o = document.createElement('option');
+    o.value = id; o.textContent = name;
+    if (id === curr) o.selected = true;
+    sel.appendChild(o);
+  });
+
+  // scan scope dropdown — merge any subs discovered in results
+  if (subs.length) populateScopeDropdown(subs);
+}
+
+// Fills the single-sub scan dropdown. `subs` = array of [id, name].
+function populateScopeDropdown(subs) {
+  const scopeSel = document.getElementById('scopeSub');
+  if (!subs || !subs.length) return;
+  const scopeCurr = scopeSel.value;
+  scopeSel.innerHTML = '';
+  subs.forEach(([id, name]) => {
+    const o = document.createElement('option');
+    o.value = id; o.textContent = name;
+    if (id === scopeCurr) o.selected = true;
+    scopeSel.appendChild(o);
+  });
+  if (!scopeCurr && subs.length) scopeSel.value = subs[0][0];
+}
+
+// Loads subscriptions up-front (before any scan) so single-sub can be picked.
+async function loadSubscriptions() {
+  try {
+    const r = await fetch('/api/subscriptions');
+    if (!r.ok) return;
+    const data = await r.json();
+    const subs = (data.subscriptions || []).map(s => [s.Id, s.Name]);
+    if (subs.length) {
+      populateScopeDropdown(subs);
+    } else {
+      const scopeSel = document.getElementById('scopeSub');
+      scopeSel.innerHTML = '<option value="">— no subscriptions found —</option>';
+    }
+  } catch {
+    // Server not reachable (e.g. page opened as a static file) — leave placeholder.
+  }
+}
+
+function onScopeToggle() {
+  const on = document.getElementById('scopeToggle').checked;
+  document.getElementById('scopeSub').disabled = !on;
+}
+
+function getLookbackDays() {
+  return parseInt(document.getElementById('lookbackDays').value, 10);
+}
+
+// ── Triage state ────────────────────────────────────────────────────────────
+// Lets a reviewer mark a resource group as acknowledged / snoozed / dismissed.
+// Persisted in localStorage keyed by subscription|rg so it survives re-scans and
+// closes the loop from "flagged" to "reviewed".
+const TRIAGE_KEY = 'azureIdle.triage';
+const TRIAGE_LABELS = { acknowledged: '✓ Acknowledged', snoozed: '⏰ Snoozed', dismissed: '✕ Dismissed' };
+let triageState = {};
+
+function loadTriage() {
+  try { triageState = JSON.parse(localStorage.getItem(TRIAGE_KEY)) || {}; } catch { triageState = {}; }
+}
+function saveTriage() {
+  try { localStorage.setItem(TRIAGE_KEY, JSON.stringify(triageState)); } catch {}
+}
+function triageKeyFor(r) {
+  return `${r.SubscriptionId}|${(r.ResourceGroupName || '').toLowerCase()}`;
+}
+function getTriage(r) {
+  return triageState[triageKeyFor(r)] || null;
+}
+// Toggle a triage state (clicking the active state clears it).
+function setTriage(r, state) {
+  const k = triageKeyFor(r);
+  if (triageState[k] === state) delete triageState[k];
+  else triageState[k] = state;
+  saveTriage();
+  renderTable();
+  if (detailIndex >= 0) renderDetail();   // refresh open panel controls
+}
+
+// ── Sorting ───────────────────────────────────────────────────────────────────
+// When a header is clicked, colSort takes over from the Sort dropdown.
+// dir: 1 = ascending, -1 = descending.
+let colSort = { key: 'cost', dir: -1 };   // default: highest cost first
+
+// Per-column sort value. Strings compared via localeCompare in the comparator.
+function colSortValue(r, key) {
+  switch (key) {
+    case 'rg':        return r.ResourceGroupName || '';
+    case 'location':  return r.Location || '';
+    case 'resources': return r.ResourceCount ?? -1;
+    case 'signals':   return (r.ActivityLog?.HasActivity ? 1 : 0) + (r.MetricsHadActivity ? 1 : 0) + (r.LastModifiedRecently ? 1 : 0);
+    case 'cost':      return r.Cost?.EstimatedMonthlyCost ?? -1;
+    case 'advisor':   return r.Advisor?.SubscriptionScore?.Overall ?? -1;
+    case 'updated':   return r.LastModifiedTime ? new Date(r.LastModifiedTime).getTime() : -1;
+    case 'updatedBy': return (r.LastModifiedBy || '').toLowerCase();
+    case 'owner':     return (r.Owner || '').toLowerCase();
+    case 'recommendation': return r.RecommendedAction?.PotentialSavings ?? -1;
+    case 'status':    return r.IsFlagged ? 1 : 0;
+    default:          return 0;
+  }
+}
+
+function sortByColumn(key) {
+  if (colSort.key === key) {
+    colSort.dir = -colSort.dir;        // same column → flip direction
+  } else {
+    colSort = { key, dir: 1 };         // new column → ascending
+  }
+  currentPage = 1;                     // re-sort returns the user to the top
+  renderTable();
+}
+
+// Reflect the active sort in the header (arrow + highlight).
+function updateSortIndicators() {
+  document.querySelectorAll('thead th[data-col]').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (colSort.key && th.getAttribute('data-col') === colSort.key) {
+      th.classList.add(colSort.dir === 1 ? 'sort-asc' : 'sort-desc');
+    }
+  });
+}
+
+// ── Pagination ────────────────────────────────────────────────────────────────
+// Rows shown per page are sized to the available viewport height, with the rest
+// split across pages. Export/copy/detail-nav still operate on the FULL filtered
+// set — pagination only affects what's painted into the table at once.
+let currentPage = 1;
+let totalPages  = 1;
+let pageSize    = 25;
+
+// Estimate how many rows fit between the table's top and the bottom of the
+// viewport, leaving room for the pager. Falls back to a sane default.
+function computePageSize() {
+  const wrap = document.querySelector('.table-wrap');
+  if (!wrap) return 25;
+  const top       = wrap.getBoundingClientRect().top;   // distance from viewport top
+  const reserved  = 96;                                 // pager + breathing room
+  const theadH    = 42;
+  const rowH      = 58;                                 // avg row (some have a sub-line)
+  const available = window.innerHeight - top - reserved - theadH;
+  return Math.max(5, Math.floor(available / rowH));
+}
+
+function goToPage(p) {
+  currentPage = p;
+  renderTable();
+}
+
+function renderPager(totalRows, start, shownCount) {
+  const el = document.getElementById('pager');
+  if (!el) return;
+  if (totalPages <= 1) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'flex';
+
+  // Compact page-number window around the current page.
+  const pages = [];
+  const add = p => pages.push(p);
+  const win = 1;                       // neighbours on each side
+  const lo = Math.max(2, currentPage - win);
+  const hi = Math.min(totalPages - 1, currentPage + win);
+  add(1);
+  if (lo > 2) pages.push('…');
+  for (let p = lo; p <= hi; p++) add(p);
+  if (hi < totalPages - 1) pages.push('…');
+  if (totalPages > 1) add(totalPages);
+
+  const numBtns = pages.map(p => p === '…'
+    ? `<span class="pg-ellipsis">…</span>`
+    : `<button class="${p === currentPage ? 'current' : ''}" onclick="goToPage(${p})">${p}</button>`
+  ).join('');
+
+  el.innerHTML =
+    `<button onclick="goToPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''} title="Previous page">‹</button>` +
+    numBtns +
+    `<button onclick="goToPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''} title="Next page">›</button>` +
+    `<span class="pg-info">Page <b>${currentPage}</b> of <b>${totalPages}</b></span>`;
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+
+// Returns the rows currently shown in the table — same search/subscription/flagged
+// filters and active sort — so the table, the detail panel, and CSV export all agree.
+function getFilteredRows() {
+  const q            = document.getElementById('search').value.toLowerCase();
+  const subFilter    = document.getElementById('subFilter').value;
+  const flagOnly     = document.getElementById('flaggedOnly').checked;
+  // Per-column header filters: colFilters[key] is an array of selected values.
+  const colEntries = Object.entries(colFilters).filter(([, v]) => v && v.length);
+
+  let rows = allData.filter(r => {
+    if (flagOnly && !r.IsFlagged) return false;
+    if (subFilter && r.SubscriptionId !== subFilter) return false;
+    for (const [key, vals] of colEntries) {
+      const f = COL_FILTERS[key];
+      if (f.match ? !f.match(r, vals) : !vals.includes(f.accessor(r))) return false;
+    }
+    if (q) {
+      const hay = [r.ResourceGroupName, r.SubscriptionName, r.Owner, r.Team, r.Location]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  rows.sort((a, b) => {
+    const va = colSortValue(a, colSort.key);
+    const vb = colSortValue(b, colSort.key);
+    const cmp = (typeof va === 'string' || typeof vb === 'string')
+      ? String(va).localeCompare(String(vb)) : va - vb;
+    return cmp * colSort.dir;
+  });
+  return rows;
+}
+
+function renderTable() {
+  const rows = getFilteredRows();
+  updateSortIndicators();
+
+  const tbody = document.getElementById('tableBody');
+  if (rows.length === 0) {
+    tbody.innerHTML = allData.length
+      ? `<tr><td colspan="11" class="no-data">
+          <div class="no-data-icon">🔍</div>
+          <div>No resource groups match your filters.</div>
+          <button class="empty-cta" style="background:transparent;color:var(--accent);border:1px solid var(--border)" onclick="clearFilters()">Clear filters</button>
+        </td></tr>`
+      : `<tr><td colspan="11" class="no-data">
+          <div class="no-data-icon">📭</div>
+          <div>No scan data yet. Run a scan to discover idle resource groups.</div>
+          <button class="empty-cta" onclick="startScan()">▶ Run Scan</button>
+        </td></tr>`;
+    totalPages = 1; currentPage = 1;
+    renderPager(0, 0, 0);
+    updateFilterSummary(0, 0, 0);
+    return;
+  }
+
+  // Page the filtered rows to what fits on screen.
+  pageSize   = computePageSize();
+  totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+  const start    = (currentPage - 1) * pageSize;
+  const pageRows = rows.slice(start, start + pageSize);
+
+  tbody.innerHTML = pageRows.map((r, li) => {
+    const i = start + li;   // global index into the full filtered list (detail nav uses this)
+    const cost = r.Cost?.EstimatedMonthlyCost != null
+      ? `<span class="cost-val">${r.Cost.EstimatedMonthlyCost.toLocaleString('en-US', {
+          style: 'currency', currency: r.Cost.Currency || 'USD', maximumFractionDigits: 0 })}</span>`
+      : `<span class="cost-null">N/A</span>`;
+
+    // Icon + text so the on/off state doesn't rely on colour alone (a11y).
+    // Each chip carries a descriptive tooltip explaining the signal + its state.
+    const signals = [
+      { key: 'Act', on: r.ActivityLog?.HasActivity,
+        desc: 'Activity Log: write/delete operations recorded for this resource group in the Azure Activity Log within the lookback window.' },
+      { key: 'Metrics', on: r.MetricsHadActivity,
+        desc: 'Metrics: platform usage metrics (CPU, network, disk I/O, etc.) reported by resources in this group within the lookback window.' },
+      { key: 'Modified', on: r.LastModifiedRecently,
+        desc: 'Last Modified: a resource in this group was created or changed inside the lookback window.' },
+    ].map(s => `<span class="sig ${s.on ? 'sig-on' : 'sig-off'}" title="${esc(s.desc)}\n\n${s.on ? '✓ Signal active — activity detected.' : '✗ Signal inactive — no activity in window.'}">${s.on ? '✓' : '✗'} ${s.key}</span>`).join('');
+
+    const status = r.IsFlagged
+      ? `<span class="badge badge-flag">⚠ Flagged</span>`
+      : `<span class="badge badge-ok">✓ Active</span>`;
+
+    const ownerText = [r.Owner, r.Team ? `(${r.Team})` : ''].filter(Boolean).join(' ') || '—';
+    const resTypes = (r.ResourceTypes || []).slice(0, 3)
+      .map(t => t.replace(/^microsoft\.\w+\//i, '')).join(', ');
+
+    const lastUpdated = fmtDate(r.LastModifiedTime);
+    // LastModifiedBy is now a resolved display name; the raw UPN/GUID is in the tooltip.
+    const updatedBy   = r.LastModifiedBy
+      ? `<span class="updated-by" title="${esc(r.LastModifiedByRaw || r.LastModifiedBy)}">${esc(r.LastModifiedBy)}</span>`
+      : '<span class="cost-null">—</span>';
+
+    const safetyBadges = renderSafetyBadges(r);
+    const triage = getTriage(r);
+    const triageBadge = triage
+      ? `<span class="triage-badge triage-${triage}" title="Triage: ${esc(TRIAGE_LABELS[triage])}">${esc(TRIAGE_LABELS[triage])}</span>`
+      : '';
+    const rowCls = [r.IsFlagged ? 'flagged' : '', triage === 'dismissed' ? 'dismissed' : ''].filter(Boolean).join(' ');
+
+    return `<tr class="${rowCls}" onclick="onRowClick(event, ${i})" style="cursor:pointer" title="Open details">
+      <td data-col="rg">
+        <div class="rg-name">${esc(r.ResourceGroupName)}${safetyBadges}${triageBadge}</div>
+        <div class="sub-name">${esc(r.SubscriptionName)}</div>
+      </td>
+      <td data-col="location"><span class="location-badge">${esc(r.Location)}</span></td>
+      <td data-col="resources">
+        <div>${r.ResourceCount ?? '—'}</div>
+        ${resTypes ? `<div class="resource-types">${esc(resTypes)}</div>` : ''}
+      </td>
+      <td data-col="signals"><div class="signal-grid">${signals}</div></td>
+      <td data-col="cost">${cost}</td>
+      <td data-col="updated"><div class="last-updated">${lastUpdated}</div></td>
+      <td data-col="updatedBy" class="owner-tag">${updatedBy}</td>
+      <td data-col="owner" class="owner-tag">${esc(ownerText)}</td>
+      <td data-col="recommendation">${renderRecommendationCell(r.RecommendedAction)}</td>
+      <td data-col="status">${status}<span class="row-go" title="Open details">›</span></td>
+      <td data-col="advisor">${renderAdvisorCell(r.Advisor)}</td>
+    </tr>`;
+  }).join('');
+
+  applyColumnVisibility();
+  renderPager(rows.length, start, pageRows.length);
+  updateFilterSummary(rows.length, start, pageRows.length);
+}
+
+// Open the detail panel unless the user is selecting text (so copy still works).
+function onRowClick(e, idx) {
+  const sel = window.getSelection && window.getSelection().toString();
+  if (sel && sel.length > 0) return;
+  showDetail(idx);
+}
+
+// ── Filter summary / clear ──────────────────────────────────────────────────
+function filtersActive() {
+  return !!(document.getElementById('search').value
+    || document.getElementById('subFilter').value
+    || document.getElementById('flaggedOnly').checked
+    || Object.keys(colFilters).length);
+}
+// `matched` = rows passing filters; `start`/`shownCount` describe the current page.
+function updateFilterSummary(matched, start = 0, shownCount = 0) {
+  const el = document.getElementById('filterSummary');
+  if (!el) return;
+  if (!allData.length) { el.innerHTML = ''; return; }
+  const total  = allData.length;
+  const active = filtersActive();
+  // "Showing 1–25 of 449" when paginated, "Showing 12 of 449" when it all fits.
+  const range = matched === 0 ? '0'
+    : (totalPages > 1 ? `${start + 1}–${start + shownCount}` : String(matched));
+  const ofMatched = (active && matched !== total) ? ` (filtered from ${total})` : '';
+  el.innerHTML =
+    `<span class="count">Showing <b>${range}</b> of <b>${matched}</b> resource group${matched === 1 ? '' : 's'}${ofMatched}</span>` +
+    (active ? ` <button type="button" class="clear-filters" onclick="clearFilters()">Clear filters</button>` : '');
+  // Export label reflects the full filtered set (export isn't paginated).
+  const exp = document.getElementById('exportBtn');
+  if (exp) exp.textContent = `⬇ Export CSV${matched ? ` (${matched})` : ''}`;
+}
+function clearFilters() {
+  document.getElementById('search').value = '';
+  document.getElementById('subFilter').value = '';
+  document.getElementById('flaggedOnly').checked = false;
+  colFilters = {};
+  currentPage = 1;
+  closeColFilter();
+  setupColFilterIcons();
+  renderTable();
+  renderHeatmap();
+}
+
+// Export the currently-filtered/sorted rows to a CSV file. Exports the full data
+// set per row (not just the visible columns) so the file is useful for offline
+// analysis regardless of which columns are toggled on in the UI.
+function exportCsv() {
+  const rows = getFilteredRows();
+  if (!rows.length) { showToast('Nothing to export — no rows match the current filters.'); return; }
+
+  const cols = [
+    ['Subscription',       r => r.SubscriptionName],
+    ['Subscription ID',    r => r.SubscriptionId],
+    ['Resource Group',     r => r.ResourceGroupName],
+    ['Location',           r => r.Location],
+    ['Resources',          r => r.ResourceCount ?? ''],
+    ['Status',             r => r.IsFlagged ? 'Flagged' : 'Active'],
+    ['Activity Log',       r => r.ActivityLog?.HasActivity ? 'yes' : 'no'],
+    ['Metrics Activity',   r => r.MetricsHadActivity ? 'yes' : 'no'],
+    ['Modified Recently',  r => r.LastModifiedRecently ? 'yes' : 'no'],
+    ['Est. Monthly Cost',  r => r.Cost?.EstimatedMonthlyCost ?? ''],
+    ['Currency',           r => r.Cost?.Currency ?? ''],
+    ['Last Updated',       r => r.LastModifiedTime ?? ''],
+    ['Updated By',         r => r.LastModifiedBy ?? ''],
+    ['Owner',              r => r.Owner ?? ''],
+    ['Team',               r => r.Team ?? ''],
+    ['Environment',        r => r.Environment ?? ''],
+    ['Recommendation',     r => r.RecommendedAction?.Action ?? ''],
+    ['Reason',             r => r.RecommendedAction?.Reason ?? ''],
+    ['Potential Savings',  r => r.RecommendedAction?.PotentialSavings ?? ''],
+    ['Managed',            r => r.IsManaged ? 'yes' : 'no'],
+    ['Managed Reason',     r => r.ManagedReason ?? ''],
+    ['Locks',              r => r.Locks?.length ?? 0],
+    ['Orphaned Resources', r => r.OrphanedResources?.length ?? 0],
+    ['Advisor Recs',       r => r.Advisor?.RgRecommendations?.Total ?? 0],
+    ['Resource Types',     r => (r.ResourceTypes || []).join('; ')],
+  ];
+
+  // RFC-4180 field: quote when it contains a comma, quote, or newline; double inner quotes.
+  const cell = v => {
+    let s = v == null ? '' : String(v);
+    // CSV formula-injection guard: neutralize cells a spreadsheet would execute.
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const header = cols.map(c => cell(c[0])).join(',');
+  const body   = rows.map(r => cols.map(c => cell(c[1](r))).join(','));
+  const csv    = '﻿' + [header, ...body].join('\r\n');   // BOM so Excel reads UTF-8
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const ts   = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `idle-resource-scan-${ts}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${rows.length} row${rows.length === 1 ? '' : 's'} to CSV.`);
+}
+
+// Copy ready-to-run Azure CLI delete commands for the flagged rows currently
+// shown. Skips managed/system RGs and ones with locks (commented out as a guard),
+// and excludes anything triaged as dismissed.
+function copyDeleteCommands() {
+  const rows = getFilteredRows().filter(r => r.IsFlagged && getTriage(r) !== 'dismissed');
+  if (!rows.length) { showToast('No flagged resource groups in the current view to delete.'); return; }
+
+  const lines = [
+    '# Review carefully before running. Generated by Idle Resource Scanner.',
+    '# Commands for managed/system RGs or RGs with locks are commented out as a safety guard.',
+    ''
+  ];
+  let active = 0;
+  for (const r of rows) {
+    const guarded = r.IsManaged || (r.Locks && r.Locks.length);
+    const cmd = `az group delete --name "${r.ResourceGroupName}" --subscription "${r.SubscriptionId}" --yes --no-wait`;
+    if (guarded) {
+      const why = r.IsManaged ? 'managed/system RG' : 'has resource lock(s)';
+      lines.push(`# [GUARDED: ${why}] ${cmd}`);
+    } else {
+      lines.push(cmd);
+      active++;
+    }
+  }
+  const text = lines.join('\n');
+  const done = () => showToast(`Copied ${active} delete command${active === 1 ? '' : 's'} (${rows.length - active} guarded) to clipboard.`);
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch { showToast('Copy failed — clipboard unavailable.'); }
+  document.body.removeChild(ta);
+}
+
+function renderErrors() {
+  const sec = document.getElementById('errorsSection');
+  const hasWarnings = allData.some(r => r.Warnings?.length);
+  if (!errorData.length && !hasWarnings) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  const warnings = allData.filter(r => r.Warnings?.length)
+    .flatMap(r => r.Warnings.map(w => ({ rg: r.ResourceGroupName, msg: w })));
+  const totalIssues = errorData.length + warnings.length;
+  sec.innerHTML = `<details class="errors-section">
+    <summary>⚠ ${totalIssues} scan issue(s) — click to expand</summary>
+    <ul>
+      ${errorData.map(e => {
+        const loc  = e.ExceptionType ? `<span style="opacity:.6;font-size:10px"> — ${esc(e.ExceptionType)}${e.ScriptLine ? ` line ${e.ScriptLine}` : ''}</span>` : '';
+        return `<li><strong>${esc(e.ResourceGroupName || e.SubscriptionId)}</strong> [fatal]: ${esc(e.Error)}${loc}</li>`;
+      }).join('')}
+      ${warnings.map(w =>
+        `<li><strong>${esc(w.rg)}</strong> [partial]: ${esc(w.msg)}</li>`
+      ).join('')}
+    </ul>
+  </details>`;
+}
+
+// ── Detail panel ──────────────────────────────────────────────────────────────
+
+let detailRows  = [];
+let detailIndex = -1;
+
+// Open the panel for a row, snapshotting the current filtered/sorted list so
+// prev/next navigation stays consistent with the table.
+function showDetail(idx) {
+  detailRows  = getFilteredRows();
+  detailIndex = idx;
+  renderDetail();
+  document.getElementById('detailOverlay').classList.add('open');
+  // Focus the close button so Esc / arrow keys work immediately.
+  const close = document.querySelector('#detailPanel .detail-close');
+  if (close) close.focus();
+}
+
+function navDetail(delta) {
+  if (detailIndex < 0) return;
+  const next = detailIndex + delta;
+  if (next < 0 || next >= detailRows.length) return;
+  detailIndex = next;
+  renderDetail();
+}
+
+function renderDetail() {
+  const r = detailRows[detailIndex];
+  if (!r) return;
+  const triage = getTriage(r);
+
+  const tags = r.Tags
+    ? Object.entries(r.Tags).map(([k,v]) => `<span class="tag-chip"><strong>${esc(k)}</strong>: ${esc(v)}</span>`).join('')
+    : '<span style="color:var(--muted);font-size:12px">No tags</span>';
+
+  const lastEvent = r.ActivityLog?.LastEventTime
+    ? new Date(r.ActivityLog.LastEventTime).toLocaleString() : 'None in window';
+
+  document.getElementById('detailPanel').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div class="detail-nav">
+        <button onclick="navDetail(-1)" ${detailIndex <= 0 ? 'disabled' : ''} title="Previous (←)">‹</button>
+        <span class="pos">${detailIndex + 1} of ${detailRows.length}</span>
+        <button onclick="navDetail(1)" ${detailIndex >= detailRows.length - 1 ? 'disabled' : ''} title="Next (→)">›</button>
+      </div>
+      <button class="detail-close" onclick="closeDetail()" title="Close (Esc)">✕</button>
+    </div>
+    <h2 style="font-size:16px;margin-bottom:4px">${esc(r.ResourceGroupName)}</h2>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:16px">${esc(r.SubscriptionName)} · ${esc(r.Location)}${r.Environment ? ' · ' + esc(r.Environment) : ''}</div>
+
+    <div class="detail-section">
+      <h3>Triage</h3>
+      <div class="triage-controls">
+        <button class="triage-btn ${triage === 'acknowledged' ? 'active' : ''}" onclick="setTriage(detailRows[detailIndex], 'acknowledged')">✓ Acknowledge</button>
+        <button class="triage-btn ${triage === 'snoozed' ? 'active' : ''}" onclick="setTriage(detailRows[detailIndex], 'snoozed')">⏰ Snooze</button>
+        <button class="triage-btn ${triage === 'dismissed' ? 'active' : ''}" onclick="setTriage(detailRows[detailIndex], 'dismissed')">✕ Dismiss</button>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Recommendation</h3>
+      ${r.RecommendedAction ? `
+        <div class="detail-row"><span class="detail-key">Action</span>${renderRecommendationCell(r.RecommendedAction)}</div>
+        <div class="detail-row"><span class="detail-key">Reason</span><span>${esc(r.RecommendedAction.Reason || '—')}</span></div>
+        ${r.RecommendedAction.PotentialSavings > 0 ? `<div class="detail-row"><span class="detail-key">Potential savings</span><span class="cost-val">${r.RecommendedAction.PotentialSavings.toLocaleString('en-US',{style:'currency',currency:'USD'})}/mo</span></div>` : ''}
+      ` : '<div style="color:var(--muted);font-size:12px">No recommendation</div>'}
+    </div>
+
+    <div class="detail-section">
+      <h3>Safety &amp; Governance</h3>
+      <div class="detail-row"><span class="detail-key">Managed / system RG</span>
+        <span style="color:${r.IsManaged ? '#7aa2f7' : 'var(--muted)'}">${r.IsManaged ? '⚠ ' + esc(r.ManagedReason || 'Yes') : 'No'}</span></div>
+      <div class="detail-row"><span class="detail-key">Resource locks</span>
+        <span style="color:${(r.Locks||[]).length ? 'var(--warn)' : 'var(--muted)'}">${(r.Locks||[]).length ? (r.Locks.map(l=>esc(l.Level||'lock')).join(', ')) : 'None'}</span></div>
+      <div class="detail-row"><span class="detail-key">Environment</span><span>${esc(r.Environment || '—')}</span></div>
+      ${(r.OrphanedResources||[]).length ? `
+        <div class="detail-row" style="align-items:flex-start"><span class="detail-key">Orphaned resources</span><span>${r.OrphanedResources.length}</span></div>
+        ${r.OrphanedResources.map(o => `<div class="detail-row"><span class="detail-key" style="padding-left:12px">↳ ${esc(o.Name)}</span><span style="font-size:11px;color:var(--muted)">${esc(o.Reason)}</span></div>`).join('')}
+      ` : '<div class="detail-row"><span class="detail-key">Orphaned resources</span><span style="color:var(--muted)">None detected</span></div>'}
+    </div>
+
+    <div class="detail-section">
+      <h3>Activity Signals (${r.IsFlagged ? '⚠ All inactive' : '✓ Active'})</h3>
+      <div class="detail-row"><span class="detail-key">Activity Log</span>
+        <span style="color:${r.ActivityLog?.HasActivity ? 'var(--ok)' : 'var(--danger)'}">
+          ${r.ActivityLog?.HasActivity ? '✓ Events found' : '✗ No events'}
+        </span></div>
+      <div class="detail-row"><span class="detail-key">Last event</span><span>${esc(lastEvent)}</span></div>
+      <div class="detail-row"><span class="detail-key">Last caller</span><span>${esc(r.ActivityLog?.LastCaller || '—')}</span></div>
+      <div class="detail-row"><span class="detail-key">Metrics activity</span>
+        <span style="color:${r.MetricsHadActivity ? 'var(--ok)' : 'var(--danger)'}">
+          ${r.MetricsHadActivity ? '✓ Activity detected' : '✗ No metric activity'}
+        </span></div>
+      <div class="detail-row"><span class="detail-key">Resource modified recently</span>
+        <span style="color:${r.LastModifiedRecently ? 'var(--ok)' : 'var(--danger)'}">
+          ${r.LastModifiedRecently ? '✓ Recently modified' : '✗ Not modified'}
+        </span></div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Resources (${r.ResourceCount})</h3>
+      ${(r.ResourceTypes || []).map(t =>
+        `<div class="detail-row"><span class="detail-key">${esc(t.replace(/^microsoft\.\w+\//i,''))}</span></div>`
+      ).join('') || '<div style="color:var(--muted);font-size:12px">No resource types available</div>'}
+    </div>
+
+    <div class="detail-section">
+      <h3>Azure Advisor</h3>
+      ${(() => {
+        const adv = r.Advisor;
+        if (!adv) return '<div style="color:var(--muted);font-size:12px">No Advisor data</div>';
+        const sc  = adv.SubscriptionScore;
+        const rcs = adv.RgRecommendations;
+        const catRows = rcs?.ByCategory
+          ? Object.entries(rcs.ByCategory).map(([k,v]) =>
+              `<div class="detail-row"><span class="detail-key">${esc(k)}</span><span>${v} rec${v!==1?'s':''}</span></div>`
+            ).join('')
+          : '';
+        const subScoreRows = sc
+          ? `<div class="detail-row"><span class="detail-key">Sub score (overall)</span>
+               <span style="font-weight:600;color:${sc.Overall>=80?'var(--ok)':sc.Overall>=50?'var(--warn)':'var(--danger)'}">${sc.Overall}</span></div>
+             ${Object.entries(sc.CategoryScores||{}).map(([k,v]) =>
+               `<div class="detail-row"><span class="detail-key">↳ ${esc(k)}</span><span>${v}</span></div>`
+             ).join('')}`
+          : '<div class="detail-row"><span class="detail-key">Sub score</span><span style="color:var(--muted)">N/A</span></div>';
+        return subScoreRows +
+          `<div class="detail-row"><span class="detail-key">RG recommendations</span><span>${rcs?.Total ?? 0}</span></div>` +
+          `<div class="detail-row"><span class="detail-key">↳ High severity</span><span style="color:${(rcs?.BySeverity?.High??0)>0?'var(--danger)':'var(--muted)'}">${rcs?.BySeverity?.High ?? 0}</span></div>` +
+          `<div class="detail-row"><span class="detail-key">↳ Medium severity</span><span style="color:${(rcs?.BySeverity?.Medium??0)>0?'var(--warn)':'var(--muted)'}">${rcs?.BySeverity?.Medium ?? 0}</span></div>` +
+          `<div class="detail-row"><span class="detail-key">↳ Low severity</span><span>${rcs?.BySeverity?.Low ?? 0}</span></div>` +
+          catRows;
+      })()}
+    </div>
+
+    <div class="detail-section">
+      <h3>Cost</h3>
+      ${r.Cost ? `
+        <div class="detail-row"><span class="detail-key">Est. monthly cost</span>
+          <span class="cost-val">${r.Cost.EstimatedMonthlyCost?.toLocaleString('en-US', {style:'currency',currency:r.Cost.Currency||'USD'})}</span></div>
+        <div class="detail-row"><span class="detail-key">Cost in scan period</span>
+          <span>${r.Cost.ActualCostInPeriod?.toLocaleString('en-US', {style:'currency',currency:r.Cost.Currency||'USD'})}</span></div>
+        <div class="detail-row"><span class="detail-key">Currency</span><span>${esc(r.Cost.Currency)}</span></div>
+      ` : '<div style="color:var(--muted);font-size:12px">Cost data unavailable</div>'}
+    </div>
+
+    <div class="detail-section">
+      <h3>Ownership</h3>
+      <div class="detail-row"><span class="detail-key">Owner tag</span><span>${esc(r.Owner || '—')}</span></div>
+      <div class="detail-row"><span class="detail-key">Team tag</span><span>${esc(r.Team || '—')}</span></div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Tags</h3>
+      <div class="tag-list">${tags}</div>
+    </div>
+
+    <div class="detail-section">
+      <h3>IDs</h3>
+      <div class="detail-row"><span class="detail-key">Subscription ID</span>
+        <span style="font-size:11px;font-family:monospace">${esc(r.SubscriptionId)}</span></div>
+    </div>
+  `;
+}
+
+function closeDetail(e) {
+  if (!e || e.target === document.getElementById('detailOverlay')) {
+    document.getElementById('detailOverlay').classList.remove('open');
+    detailIndex = -1;
+  }
+}
+
+// Re-paginate when the viewport height changes so the page always fills the
+// available space. Debounced to avoid thrashing during a drag-resize.
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (allData.length) renderTable(); }, 150);
+});
+
+// Keyboard: Esc closes, ←/→ navigate between rows while the panel is open.
+document.addEventListener('keydown', (e) => {
+  if (!document.getElementById('detailOverlay').classList.contains('open')) return;
+  if (e.key === 'Escape')      { closeDetail(); }
+  else if (e.key === 'ArrowLeft')  { e.preventDefault(); navDetail(-1); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); navDetail(1); }
+});
+
+// ── Scan control ──────────────────────────────────────────────────────────────
+
+async function startScan() {
+  try {
+    document.getElementById('scanPop')?.classList.remove('open');
+    const scopeOn    = document.getElementById('scopeToggle').checked;
+    const scopeSub   = document.getElementById('scopeSub').value;
+    const lookback   = getLookbackDays();
+    const bodyObj    = { lookbackDays: lookback };
+    if (scopeOn && scopeSub) bodyObj.singleSubscriptionId = scopeSub;
+    const body = JSON.stringify(bodyObj);
+    const r = await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body
+    });
+    if (r.status === 409) { showToast('A scan is already running.'); return; }
+    if (!r.ok) { showToast('Failed to start scan.'); return; }
+    scanStartMs = Date.now();
+    setStatus('running');
+    renderProgress(null);
+    pollStatus();
+  } catch {
+    showToast('Cannot reach server. Is Start-Dashboard.ps1 running?');
+  }
+}
+
+async function cancelScan() {
+  const cancelBtn = document.getElementById('cancelBtn');
+  if (cancelBtn) cancelBtn.disabled = true;
+  try {
+    const r = await fetch('/api/scan/cancel', { method: 'POST' });
+    if (!r.ok && r.status !== 409) { showToast('Failed to cancel scan.'); if (cancelBtn) cancelBtn.disabled = false; return; }
+    clearTimeout(pollTimer);   // stop polling the now-dead job
+    scanStartMs = null;
+    setStatus('cancelled');
+    hideProgress();
+    showToast('Scan cancelled.');
+  } catch {
+    showToast('Cannot reach server. Is Start-Dashboard.ps1 running?');
+    if (cancelBtn) cancelBtn.disabled = false;
+  }
+}
+
+function pollStatus() {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(async () => {
+    try {
+      const r = await fetch('/api/status');
+      const s = await r.json();
+      if (s.State === 'running') {
+        setStatus('running');
+        renderProgress(s.Progress);
+        pollStatus();
+      } else if (s.State === 'completed') {
+        renderProgress({ Phase: 'done', Percent: 100, Message: 'Scan complete.' });
+        setStatus('done');
+        await loadResults();
+        // Learn the average per-RG scan time so the next run can show an ETA early.
+        if (scanStartMs && allData.length > 0) {
+          const avgMs = (Date.now() - scanStartMs) / allData.length;
+          if (avgMs > 0 && isFinite(avgMs)) localStorage.setItem('avgRgScanMs', String(Math.round(avgMs)));
+        }
+        scanStartMs = null;
+        showToast('Scan complete.');
+        setTimeout(hideProgress, 1500);
+      } else if (s.State === 'failed') {
+        setStatus('failed', s.Message);
+        hideProgress();
+        showToast('Scan failed: ' + s.Message);
+      } else if (s.State === 'cancelled') {
+        scanStartMs = null;
+        setStatus('cancelled');
+        hideProgress();
+      }
+    } catch { pollStatus(); }
+  }, 1000);
+}
+
+// Human-friendly short duration, e.g. 95000 → "1m 35s", 8000 → "8s".
+function fmtDuration(ms) {
+  const totalSec = Math.max(0, Math.round(ms / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  if (m < 60) return s ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+// Estimate remaining scan time. Once the scan reports real progress we scale
+// elapsed wall-time by the completed fraction (average time per unit of work ×
+// work remaining). Before that, fall back to total-items × the historical
+// per-RG average learned from the previous run.
+function estimateEta(p) {
+  if (!p || p.Phase === 'done') return '';
+  const pct = p.Percent ?? 0;
+  if (scanStartMs) {
+    const elapsedMs = Date.now() - scanStartMs;
+    if (pct >= 1 && elapsedMs > 2000) {
+      const estTotalMs = elapsedMs / (pct / 100);
+      return `~${fmtDuration(estTotalMs - elapsedMs)} left`;
+    }
+  }
+  const avgPerRg = Number(localStorage.getItem('avgRgScanMs')) || 0;
+  if (avgPerRg > 0 && p.TotalRgs) {
+    const totalItems = (p.TotalSubs && p.TotalSubs > 1) ? p.TotalRgs * p.TotalSubs : p.TotalRgs;
+    return `~${fmtDuration(totalItems * avgPerRg)} left`;
+  }
+  return '';
+}
+
+function renderProgress(p) {
+  const wrap  = document.getElementById('progressWrap');
+  const fill  = document.getElementById('progressFill');
+  const pct   = document.getElementById('progressPct');
+  const label = document.getElementById('progressLabel');
+  const sub   = document.getElementById('progressSub');
+  wrap.classList.add('active');
+
+  if (!p) {
+    fill.classList.add('indeterminate');
+    fill.classList.remove('done');
+    fill.style.width = '100%';
+    label.textContent = 'Starting scan…';
+    pct.textContent = '';
+    sub.textContent = '';
+    return;
+  }
+
+  const done = p.Phase === 'done';
+  // Indeterminate until we know how many subscriptions there are.
+  const indeterminate = !done && (!p.TotalSubs || p.TotalSubs === 0);
+  fill.classList.toggle('indeterminate', indeterminate);
+  fill.classList.toggle('done', done);
+
+  const eta = estimateEta(p);
+  if (indeterminate) {
+    fill.style.width = '100%';
+    pct.textContent = eta;   // no % yet — show ETA alone if we have an early estimate
+  } else {
+    const percent = Math.max(0, Math.min(100, p.Percent ?? 0));
+    fill.style.width = percent + '%';
+    pct.textContent = Math.round(percent) + '%' + (eta ? `  ·  ${eta}` : '');
+  }
+
+  // Primary label — stream the latest live log line when available.
+  const tail     = Array.isArray(p.LogTail) ? p.LogTail : [];
+  const liveLine = tail.length ? tail[tail.length - 1] : null;
+
+  if (done) {
+    label.textContent = p.Message || 'Scan complete.';
+  } else if (liveLine) {
+    label.textContent = liveLine;             // live console output
+  } else if (p.Phase === 'init') {
+    label.textContent = p.Message || 'Initialising…';
+  } else if (p.CurrentSub) {
+    const subPos = p.TotalSubs ? ` (${p.SubIndex}/${p.TotalSubs})` : '';
+    label.textContent = `Scanning ${p.CurrentSub}${subPos}`;
+  } else {
+    label.textContent = p.Message || 'Scanning…';
+  }
+
+  // Secondary detail line — structured stats (sub/RG position + flagged count).
+  const parts = [];
+  if (p.CurrentSub) {
+    const subPos = p.TotalSubs ? ` (${p.SubIndex}/${p.TotalSubs})` : '';
+    parts.push(`Sub${subPos}: ${p.CurrentSub}`);
+  }
+  if (p.CurrentRg) {
+    const rgPos = p.TotalRgs ? ` ${p.RgIndex}/${p.TotalRgs}` : '';
+    parts.push(`RG${rgPos}`);
+  }
+  if (p.FlaggedSoFar != null && p.FlaggedSoFar > 0) parts.push(`${p.FlaggedSoFar} flagged`);
+  sub.textContent = parts.join(' · ');
+}
+
+function hideProgress() {
+  const wrap = document.getElementById('progressWrap');
+  if (wrap) wrap.classList.remove('active');
+}
+
+function setStatus(state, msg) {
+  const pill = document.getElementById('statusPill');
+  const dot  = document.getElementById('statusDot');
+  const txt  = document.getElementById('statusText');
+  const btn  = document.getElementById('scanBtn');
+  const cancelBtn = document.getElementById('cancelBtn');
+
+  pill.className = 'status-pill ' + (state === 'done' ? 'done' : state === 'failed' ? 'failed' : state === 'running' ? 'running' : 'idle');
+
+  const emptyBtn = document.getElementById('emptyScanBtn');
+  if (state === 'running') {
+    dot.outerHTML = '<span class="spinner" id="statusDot"></span>';
+    txt.textContent = 'Scanning…';
+    btn.disabled = true;
+    if (emptyBtn) emptyBtn.disabled = true;
+    if (cancelBtn) { cancelBtn.style.display = ''; cancelBtn.disabled = false; }
+  } else {
+    document.getElementById('statusDot').outerHTML = '<span id="statusDot">●</span>';
+    txt.textContent = state === 'done' ? 'Complete' : state === 'failed' ? 'Failed' : state === 'cancelled' ? 'Cancelled' : 'Idle';
+    btn.disabled = false;
+    if (emptyBtn) emptyBtn.disabled = false;
+    if (cancelBtn) cancelBtn.style.display = 'none';
+  }
+}
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+
+// Small inline badges shown next to the RG name: managed, locked, orphans.
+function renderSafetyBadges(r) {
+  const b = [];
+  if (r.IsManaged) {
+    b.push(`<span class="rg-badge badge-managed" title="${esc(r.ManagedReason || 'Managed/system resource group')}">managed</span>`);
+  }
+  const locks = r.Locks || [];
+  if (locks.length) {
+    const lvls = locks.map(l => l.Level).filter(Boolean).join(', ');
+    b.push(`<span class="rg-badge badge-lock" title="${esc(locks.length + ' lock(s): ' + (lvls || 'n/a'))}">🔒 ${locks.length}</span>`);
+  }
+  const orphans = r.OrphanedResources || [];
+  if (orphans.length) {
+    b.push(`<span class="rg-badge badge-orphan" title="${esc(orphans.length + ' orphaned resource(s)')}">${orphans.length} orphan${orphans.length > 1 ? 's' : ''}</span>`);
+  }
+  return b.length ? ' ' + b.join(' ') : '';
+}
+
+// Recommendation cell: action chip + reason + potential savings.
+const ACTION_CLASS = {
+  'Keep': 'act-keep', 'Review lock': 'act-review', 'Delete': 'act-delete',
+  'Clean up orphans': 'act-clean', 'Decommission': 'act-decom',
+};
+function renderRecommendationCell(rec) {
+  if (!rec) return '<span class="cost-null">—</span>';
+  const cls = ACTION_CLASS[rec.Action] || 'act-keep';
+  const savings = rec.PotentialSavings > 0
+    ? `<div class="rec-savings">save ~${rec.PotentialSavings.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}/mo</div>`
+    : '';
+  return `<div class="rec-action" title="${esc(rec.Reason || '')}">
+      <span class="act-chip ${cls}">${esc(rec.Action)}</span>${savings}
+    </div>`;
+}
+
+function renderAdvisorCell(advisor) {
+  if (!advisor) return '<span class="rec-none">N/A</span>';
+
+  const score = advisor.SubscriptionScore?.Overall;
+  const recs  = advisor.RgRecommendations;
+
+  // Score ring colour
+  let scoreClass = 'none', scoreLabel = '—';
+  if (score != null) {
+    scoreLabel = Math.round(score);
+    scoreClass = score >= 80 ? 'high' : score >= 50 ? 'medium' : 'low';
+  }
+  const ring = `<div class="advisor-score ${scoreClass}" title="Subscription Advisor score: ${score ?? 'N/A'}">${scoreLabel}</div>`;
+
+  if (!recs || recs.Total === 0) {
+    return `<div class="advisor-cell">${ring}<span class="rec-none">No recs</span></div>`;
+  }
+
+  const pills = [
+    recs.BySeverity?.High   ? `<span class="rec-pill rec-high">H:${recs.BySeverity.High}</span>`   : '',
+    recs.BySeverity?.Medium ? `<span class="rec-pill rec-medium">M:${recs.BySeverity.Medium}</span>` : '',
+    recs.BySeverity?.Low    ? `<span class="rec-pill rec-low">L:${recs.BySeverity.Low}</span>`     : '',
+  ].filter(Boolean).join('');
+
+  return `<div class="advisor-cell">${ring}<div class="advisor-recs">${pills}</div></div>`;
+}
+
+function set(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+// Format an ISO timestamp as a short local date, or em dash if missing.
+function fmtDate(iso) {
+  if (!iso) return '<span class="cost-null">—</span>';
+  const d = new Date(iso);
+  if (isNaN(d)) return '<span class="cost-null">—</span>';
+  const date = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  return `<span title="${esc(d.toLocaleString())}">${date}</span>`;
+}
+
+// Collapse "user@domain.com" → "user"; pass GUIDs/SPNs through trimmed.
+function shortenPrincipal(p) {
+  if (!p) return '—';
+  const at = p.indexOf('@');
+  return at > 0 ? p.slice(0, at) : p;
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+document.querySelectorAll('thead th[data-col]').forEach(th => {
+  th.addEventListener('click', () => sortByColumn(th.getAttribute('data-col')));
+});
+setupColFilterIcons();   // add funnel icons to filterable headers on the empty table
+loadColumnPrefs();
+buildColumnMenu();
+applyColumnVisibility();   // hide Owner (and any saved-off columns) on the initial empty table
+loadTriage();
+loadResults();
+loadSubscriptions();   // populate single-sub dropdown before any scan runs
+// Check if a scan was already running when the page loaded
+fetch('/api/status').then(r => r.json()).then(s => {
+  if (s.State === 'running') {
+    // Resume: prefer the server's StartedAt so the ETA reflects true elapsed time.
+    scanStartMs = s.StartedAt ? new Date(s.StartedAt).getTime() : Date.now();
+    setStatus('running'); renderProgress(s.Progress); pollStatus();
+  }
+}).catch(() => {});
+</script>
+
+<button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">
+  <span class="ico" id="themeIco">🌙</span><span id="themeLabel">Dark</span>
+</button>
+<script>
+  function applyThemeButton() {
+    const light = document.documentElement.classList.contains('light');
+    document.getElementById('themeIco').textContent = light ? '☀️' : '🌙';
+    document.getElementById('themeLabel').textContent = light ? 'Light' : 'Dark';
+  }
+  function toggleTheme() {
+    const light = document.documentElement.classList.toggle('light');
+    try { localStorage.setItem('azureHub.theme', light ? 'light' : 'dark'); } catch (e) {}
+    applyThemeButton();
+  }
+  applyThemeButton();
+</script>
+</body>
+</html>
