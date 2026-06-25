@@ -10,9 +10,17 @@ Log, resource metrics, and last-modified time), enriches them with cost, Azure A
 resource locks, orphaned-resource and managed/system-RG detection, then visualizes the
 results in a local web dashboard.
 
-There is **no build system, no package manager, and no test suite**. The app is a set of
-PowerShell scanners + single-file HTML dashboards that communicate through JSON files on
-disk. Additional tools in the hub: a Privileged Access scanner, an Entra user scanner, a
+There is **no build system and no package manager** (a lightweight PowerShell smoke-test suite
+lives in `tests/` — `./tests/Run-Tests.ps1`). The app is a set of PowerShell scanners +
+single-file HTML dashboards that communicate through JSON files on disk.
+
+Beyond the six tools detailed below, the hub now carries **~19 more** ported to parity with the
+sibling Python app (`azure-engineering-dashboard`) plus a Storage Account Active SAS Keys tool,
+spanning security/exposure, governance, resilience/ops, cost, and networking. These newer tools
+are registered declaratively (one line in `$script:portedTools`) and served by a generic
+dispatcher rather than hand-written endpoints — see "Ported-tool registry" under Conventions.
+
+Additional original tools in the hub: a Privileged Access scanner, an Entra user scanner, a
 **Tag Auditor** (`Invoke-TagComplianceScan.ps1` / `tag-compliance.html`) that recurses
 subscriptions → resource groups → resources via Azure Resource Graph and checks each
 object's *effective* (inherited) tags against UI-supplied required-tag rules, and a
@@ -202,12 +210,23 @@ Start-Dashboard.ps1 ──Start-ThreadJob──> runs the scanner, serves HTML +
 - When adding a new tool to the hub: **run `./New-HubTool.ps1 -Name "..." -Slug ... -ApiPrefix ...`**.
   It scaffolds `scanners/Invoke-<Name>Scan.ps1` (standard scope params + progress scaffolding +
   the `{ ScanMetadata, Items, Errors }` envelope) and `web/<slug>.html` (cloned from the
-  reference page, identifiers swapped), then prints the exact `Start-Dashboard.ps1` +
-  `web/home.html` wiring to paste — the `$pageRoutes` entry, the
-  `/api/<tool>/{results,status,scan,scan/cancel}` quartet, and the home card. Then fill the
-  TODOs (scan body; cards/columns/`renderTable`) and run `./tests/Run-Tests.ps1` — the contract
-  test enforces the conventions below (scope params, the standard page helpers, "every POST
-  fetch sends a body"). The Design language section below is the contract every page follows.
+  reference page, identifiers swapped). Then fill the TODOs (scan body; cards/columns/`renderTable`)
+  and **add one line to the ported-tool registry** (see below) — no per-tool server code — and a
+  card in `web/home.html`. Run `./tests/Run-Tests.ps1`; the contract test enforces the conventions
+  below (scope params, the standard page helpers, "every POST fetch sends a body").
+
+- **Ported-tool registry + generic dispatcher** (`Start-Dashboard.ps1`). The original six tools
+  each have a hand-written `/api/<tool>/*` endpoint quartet. **Newer tools (the parity port from
+  the Python app + the SAS-keys tool — ~19 of them) are instead one entry in `$script:portedTools`**
+  (`@{ Prefix; Slug; Scanner; Scope }`), served by a single generic dispatcher that handles
+  `/api/<prefix>/{results,status,scan,scan/cancel}` identically. `Scope` ∈ `graph` (passes
+  `-ScopeType/-ManagementGroupId/-SingleSubscriptionId/-ResourceGroup`), `subscription` (no RG),
+  `none` (tenant-wide, no scope params), or `params` (no scope; uses `Extra` only). Tools needing
+  non-scope inputs add `Extra = @(@{ Body='jsonField'; Param='ScannerParam'; Int=$true? })` and the
+  dispatcher forwards them. The page route and the `data/<slug>-scan-*.json` paths are derived from
+  the slug. So adding a registry-style tool = one registry line + a home card; the dispatcher does
+  the rest. Every ported scanner emits `{ ScanMetadata, Items, Errors }` and its page reads
+  `json.Items`. The home page's live-state cards are likewise data-driven (a `PORTED_CARDS` list).
 
 ## Design language (for new pages)
 

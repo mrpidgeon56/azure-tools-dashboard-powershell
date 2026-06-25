@@ -268,6 +268,158 @@
       </div>
     </a>
 
+    <a class="tool-card" href="/storage-posture">
+      <div class="tool-icon">🔒</div>
+      <div class="tool-title">Storage Security Posture</div>
+      <div class="tool-desc">Audits every storage account for public blob access, HTTPS-only transfer, minimum TLS, default-allow network ACLs, and shared-key access — ranked by exposure.</div>
+      <div class="tool-stats" id="storageStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Security &amp; Access</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/attack-surface">
+      <div class="tool-icon">🌐</div>
+      <div class="tool-title">Attack Surface</div>
+      <div class="tool-desc">Inventories internet-facing resources — assigned public IPs and exposed storage, SQL, Key Vault, and Cosmos endpoints — and ranks the tenant's external exposure.</div>
+      <div class="tool-stats" id="attacksurfaceStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Security &amp; Access</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/nsg-risk-map">
+      <div class="tool-icon">🛡️</div>
+      <div class="tool-title">NSG Risk Map</div>
+      <div class="tool-desc">Maps network security groups and flags risky inbound rules — any-to-any, broad source ranges, and management ports (RDP/SSH) open to the internet.</div>
+      <div class="tool-stats" id="nsgriskStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Security &amp; Access</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/cert-expiry">
+      <div class="tool-icon">📜</div>
+      <div class="tool-title">Certificate Expiry Monitor</div>
+      <div class="tool-desc">Surfaces App Service certificates that are expired or expiring soon, with days-to-expiry and a renew/review recommendation per item.</div>
+      <div class="tool-stats" id="certexpiryStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Security &amp; Access</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/defender-secure-score">
+      <div class="tool-icon">🛟</div>
+      <div class="tool-title">Defender Secure Score</div>
+      <div class="tool-desc">Reads the Microsoft Defender for Cloud Secure Score per subscription — overall posture plus the per-control breakdown, ranked by how far each control falls short.</div>
+      <div class="tool-stats" id="defenderStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Security &amp; Access</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/app-credential-expiry">
+      <div class="tool-icon">🔑</div>
+      <div class="tool-title">App &amp; SP Credential Expiry</div>
+      <div class="tool-desc">Surfaces app-registration and service-principal client secrets and certificates that are expired or nearing expiry across the tenant.</div>
+      <div class="tool-stats" id="appcredsStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Security &amp; Access</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/policy-compliance">
+      <div class="tool-icon">🏛️</div>
+      <div class="tool-title">Policy Compliance</div>
+      <div class="tool-desc">Summarizes Azure Policy compliance by assignment and scope, highlighting the assignments with the most non-compliant resources.</div>
+      <div class="tool-stats" id="policycomplianceStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Governance</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/exemption-tracker">
+      <div class="tool-icon">📑</div>
+      <div class="tool-title">Policy Exemption Tracker</div>
+      <div class="tool-desc">Tracks Azure Policy exemptions by expiry — the affected scope, who created each, and how long until it lapses.</div>
+      <div class="tool-stats" id="exemptionsStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Governance</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/deployment-tracker">
+      <div class="tool-icon">🚀</div>
+      <div class="tool-title">Deployment Tracker</div>
+      <div class="tool-desc">Tracks resource deployment events from the Activity Log over time, separating deployments made by users from those made by service principals.</div>
+      <div class="tool-stats" id="deploymentsStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Governance</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/backup-coverage">
+      <div class="tool-icon">💾</div>
+      <div class="tool-title">Backup Coverage</div>
+      <div class="tool-desc">Checks which VMs have Azure Backup configured and which are missing protection or a recent recovery point.</div>
+      <div class="tool-stats" id="backupStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Resilience &amp; Ops</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/resilience-audit">
+      <div class="tool-icon">🧯</div>
+      <div class="tool-title">Resilience Audit</div>
+      <div class="tool-desc">Audits VMs, disks, storage, and public IPs for availability-zone and redundancy single-points-of-failure — ranked by blast radius.</div>
+      <div class="tool-stats" id="resilienceStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Resilience &amp; Ops</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/resource-health">
+      <div class="tool-icon">🩺</div>
+      <div class="tool-title">Resource &amp; Service Health</div>
+      <div class="tool-desc">Live view of degraded or unavailable resources (Resource Health) plus active Service Health issues affecting your subscriptions.</div>
+      <div class="tool-stats" id="resourcehealthStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Resilience &amp; Ops</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/monitoring-gaps">
+      <div class="tool-icon">📡</div>
+      <div class="tool-title">Diagnostics Coverage</div>
+      <div class="tool-desc">Finds resources with no diagnostic settings, or whose diagnostics don't reach a Log Analytics workspace — observability blind spots.</div>
+      <div class="tool-stats" id="monitoringStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Resilience &amp; Ops</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/storage-sas-keys">
+      <div class="tool-icon">🗝️</div>
+      <div class="tool-title">Storage Account Active SAS Keys</div>
+      <div class="tool-desc">Flags storage accounts where shared-key access is enabled and an account key (which signs SAS) is active and unexpired — accounts that can still mint working SAS tokens.</div>
+      <div class="tool-stats" id="storagesasStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Security &amp; Access</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/cost-anomaly">
+      <div class="tool-icon">💸</div>
+      <div class="tool-title">Cost Allocation &amp; Anomaly</div>
+      <div class="tool-desc">Allocates spend per resource group and flags period-over-period cost anomalies — the biggest movers vs the prior comparable window.</div>
+      <div class="tool-stats" id="costanomalyStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Cost &amp; Cleanup</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/reservation-coverage">
+      <div class="tool-icon">🧾</div>
+      <div class="tool-title">Reservation &amp; Right-Sizing</div>
+      <div class="tool-desc">Surfaces Azure Advisor cost recommendations — reservation purchases, right-sizing, and shutdown opportunities — with estimated monthly savings.</div>
+      <div class="tool-stats" id="reservationsStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Cost &amp; Cleanup</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/network-topology">
+      <div class="tool-icon">🕸️</div>
+      <div class="tool-title">Network Topology</div>
+      <div class="tool-desc">Maps every VNet — address space, subnets, peerings — and flags subnets with no NSG, isolated VNets, and overlapping address spaces.</div>
+      <div class="tool-stats" id="networktopologyStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Networking</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/vnet-flow-coverage">
+      <div class="tool-icon">🌊</div>
+      <div class="tool-title">VNet Flow Log Coverage</div>
+      <div class="tool-desc">Finds virtual networks without an enabled VNet flow log — network-visibility blind spots across the tenant.</div>
+      <div class="tool-stats" id="vnetflowcoverageStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Networking</span><span class="open-link">Open →</span></div>
+    </a>
+
+    <a class="tool-card" href="/vnet-flow-logs">
+      <div class="tool-icon">📊</div>
+      <div class="tool-title">VNet Flow Logs Analyzer</div>
+      <div class="tool-desc">Reads VNet flow-log records and summarizes traffic — top talkers, destinations, ports, protocol mix, and allowed-vs-denied flows. Needs a flow log + Storage Blob Data Reader.</div>
+      <div class="tool-stats" id="vnetflowlogsStats" hidden></div>
+      <div class="tool-foot"><span class="tag">Networking</span><span class="open-link">Open →</span></div>
+    </a>
+
     <!-- Placeholder: add future tools by copying a card above and pointing href at a new route -->
     <div class="tool-card placeholder">
       <div class="tool-icon">➕</div>
@@ -512,6 +664,47 @@
       el.hidden = false;
     } catch { /* server not running — leave card static */ }
   })();
+
+  // Live state for the ported tools — data-driven so new ports are one row here.
+  // Each shows "<TotalItems> scanned · <flagged> <label> · scanned <ago>".
+  const PORTED_CARDS = [
+    { prefix: 'storage',       flagged: 'AtRisk',         label: 'at risk' },
+    { prefix: 'attacksurface', flagged: 'ExposedResources', label: 'exposed' },
+    { prefix: 'nsgrisk',       flagged: 'AtRisk',         label: 'at risk' },
+    { prefix: 'certexpiry',    flagged: 'Expired',        label: 'expired' },
+    { prefix: 'defender',      flagged: 'AtRiskControls', label: 'at risk' },
+    { prefix: 'appcreds',      flagged: 'Expired',        label: 'expired' },
+    { prefix: 'policycompliance', flagged: 'NonCompliantAssignments', label: 'non-compliant' },
+    { prefix: 'exemptions',    flagged: 'Expired',        label: 'expired' },
+    { prefix: 'deployments',   flagged: 'Failed',         label: 'failed' },
+    { prefix: 'backup',        flagged: 'Unprotected',    label: 'unprotected' },
+    { prefix: 'resilience',    flagged: 'AtRisk',         label: 'at risk' },
+    { prefix: 'resourcehealth', flagged: 'Unavailable',   label: 'unavailable' },
+    { prefix: 'monitoring',    flagged: 'MissingDiagnostics', label: 'no diagnostics' },
+    { prefix: 'storagesas',    flagged: 'Flagged',        label: 'active SAS keys' },
+    { prefix: 'costanomaly',   flagged: 'Anomalies',      label: 'anomalies' },
+    { prefix: 'reservations',  flagged: 'Opportunities',  label: 'opportunities' },
+    { prefix: 'networktopology', flagged: 'WithFindings', label: 'with issues' },
+    { prefix: 'vnetflowcoverage', flagged: 'Uncovered',   label: 'uncovered' },
+    { prefix: 'vnetflowlogs',  flagged: 'DeniedFlows',    label: 'denied flows' },
+  ];
+  PORTED_CARDS.forEach(async (c) => {
+    try {
+      const r = await fetch(`/api/${c.prefix}/results`);
+      if (!r.ok) return;
+      const meta = (await r.json()).ScanMetadata;
+      if (!meta) return;
+      const el = document.getElementById(`${c.prefix}Stats`);
+      if (!el) return;
+      const when = meta.ScanTime ? new Date(meta.ScanTime) : null;
+      const ago = when ? relativeTime(when) : '';
+      el.innerHTML =
+        `<span class="stat"><b>${meta.TotalItems ?? 0}</b> scanned</span>` +
+        `<span class="stat flagged"><b>${meta[c.flagged] ?? 0}</b> ${c.label}</span>` +
+        (ago ? `<span class="stat">scanned ${ago}</span>` : '');
+      el.hidden = false;
+    } catch { /* server not running — leave card static */ }
+  });
 
   function relativeTime(d) {
     const sec = Math.round((Date.now() - d.getTime()) / 1000);

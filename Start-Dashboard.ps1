@@ -111,6 +111,55 @@ $script:mgCache           = $null   # management groups (tenant-wide); cached fo
 $script:rgCache           = @{}     # resource groups per subscription id; lazily filled
 $script:fileCache         = @{}     # path → @{ Mtime; Bytes } so unchanged pages/results aren't re-read from disk
 
+# ── Ported-tool registry ─────────────────────────────────────────────────────
+# Tools ported from the Python app share an identical API shape, so instead of a
+# copy-pasted endpoint quartet each they're one entry here, served by the generic
+# dispatcher below. Scope: 'graph' = MG/Sub/RG, 'subscription' = MG/Sub (no RG),
+# 'none' = tenant-wide (no scope params). Results/progress paths + the page route
+# are derived from the slug; every ported scanner emits { ScanMetadata, Items, Errors }.
+$script:portedTools = @(
+    @{ Prefix = 'storage';       Slug = 'storage-posture';        Scanner = 'Invoke-StoragePostureScan.ps1';      Scope = 'graph' }
+    @{ Prefix = 'attacksurface'; Slug = 'attack-surface';         Scanner = 'Invoke-AttackSurfaceScan.ps1';       Scope = 'graph' }
+    @{ Prefix = 'nsgrisk';       Slug = 'nsg-risk-map';           Scanner = 'Invoke-NsgRiskScan.ps1';             Scope = 'graph' }
+    @{ Prefix = 'certexpiry';    Slug = 'cert-expiry';            Scanner = 'Invoke-CertExpiryScan.ps1';          Scope = 'graph' }
+    @{ Prefix = 'defender';      Slug = 'defender-secure-score';  Scanner = 'Invoke-DefenderSecureScoreScan.ps1'; Scope = 'subscription' }
+    @{ Prefix = 'appcreds';      Slug = 'app-credential-expiry';  Scanner = 'Invoke-AppCredentialExpiryScan.ps1'; Scope = 'none' }
+    @{ Prefix = 'policycompliance'; Slug = 'policy-compliance';   Scanner = 'Invoke-PolicyComplianceScan.ps1';    Scope = 'subscription' }
+    @{ Prefix = 'exemptions';    Slug = 'exemption-tracker';      Scanner = 'Invoke-ExemptionTrackerScan.ps1';    Scope = 'subscription' }
+    @{ Prefix = 'deployments';   Slug = 'deployment-tracker';     Scanner = 'Invoke-DeploymentTrackerScan.ps1';   Scope = 'subscription'
+       Extra = @( @{ Body = 'lookbackDays'; Param = 'LookbackDays'; Int = $true } ) }
+    @{ Prefix = 'backup';        Slug = 'backup-coverage';        Scanner = 'Invoke-BackupCoverageScan.ps1';      Scope = 'graph' }
+    @{ Prefix = 'resilience';    Slug = 'resilience-audit';       Scanner = 'Invoke-ResilienceAuditScan.ps1';     Scope = 'graph' }
+    @{ Prefix = 'resourcehealth';Slug = 'resource-health';        Scanner = 'Invoke-ResourceHealthScan.ps1';      Scope = 'graph' }
+    @{ Prefix = 'monitoring';    Slug = 'monitoring-gaps';        Scanner = 'Invoke-MonitoringGapsScan.ps1';      Scope = 'graph' }
+    @{ Prefix = 'storagesas';    Slug = 'storage-sas-keys';       Scanner = 'Invoke-StorageSasKeysScan.ps1';      Scope = 'graph' }
+    @{ Prefix = 'reservations';  Slug = 'reservation-coverage';   Scanner = 'Invoke-ReservationCoverageScan.ps1'; Scope = 'subscription' }
+    @{ Prefix = 'networktopology'; Slug = 'network-topology';     Scanner = 'Invoke-NetworkTopologyScan.ps1';     Scope = 'graph' }
+    @{ Prefix = 'vnetflowcoverage'; Slug = 'vnet-flow-coverage';  Scanner = 'Invoke-VnetFlowCoverageScan.ps1';    Scope = 'graph' }
+    @{ Prefix = 'costanomaly';   Slug = 'cost-anomaly';           Scanner = 'Invoke-CostAnomalyScan.ps1';         Scope = 'subscription'
+       Extra = @( @{ Body = 'windowDays'; Param = 'WindowDays'; Int = $true } ) }
+    @{ Prefix = 'vnetflowlogs';  Slug = 'vnet-flow-logs';         Scanner = 'Invoke-VnetFlowLogsScan.ps1';        Scope = 'params'
+       Extra = @(
+           @{ Body = 'flowLogId';     Param = 'FlowLogId' }
+           @{ Body = 'storageAccount';Param = 'StorageAccount' }
+           @{ Body = 'flowLogName';   Param = 'FlowLogName' }
+           @{ Body = 'vnetName';      Param = 'VnetName' }
+           @{ Body = 'pathPrefix';    Param = 'PathPrefix' }
+           @{ Body = 'lookbackHours'; Param = 'LookbackHours'; Int = $true }
+           @{ Body = 'maxBlobs';      Param = 'MaxBlobs';      Int = $true }
+           @{ Body = 'container';     Param = 'Container' }
+       ) }
+)
+$script:toolByPrefix = @{}
+$script:toolJobs     = @{}   # prefix → @{ Job; Status }
+foreach ($t in $script:portedTools) {
+    $t.ResultsPath  = "$PSScriptRoot/data/$($t.Slug)-scan-results.json"
+    $t.ProgressPath = "$PSScriptRoot/data/$($t.Slug)-scan-progress.json"
+    $t.ScanScript   = "$PSScriptRoot/scanners/$($t.Scanner)"
+    $script:toolByPrefix[$t.Prefix] = $t
+    $script:toolJobs[$t.Prefix]     = @{ Job = $null; Status = @{ State = "idle"; StartedAt = $null; Message = "No scan run yet." } }
+}
+
 function Get-MimeType([string]$ext) {
     switch ($ext) {
         ".html" { "text/html; charset=utf-8" }
@@ -248,6 +297,8 @@ try {
             "/quota-usage"        = "quota-usage.html"         # → Quota Usage Scanner
             "/home"             = "home.html"
         }
+        # Ported tools get their clean URL → page automatically from the registry.
+        foreach ($t in $script:portedTools) { $pageRoutes["/$($t.Slug)"] = "$($t.Slug).html" }
         if ($pageRoutes.ContainsKey($path)) {
             $htmlPath = "$PSScriptRoot/web/$($pageRoutes[$path])"
             if (Test-Path $htmlPath) {
@@ -1140,6 +1191,112 @@ try {
             continue
         }
 
+        # ── Generic ported-tool API ─────────────────────────────────────────
+        # Serves /api/<prefix>/{results,status,scan,scan/cancel} for every registered
+        # ported tool, identical in behaviour to the hand-written quartets above but
+        # driven by $script:portedTools. (Reached only after the inline endpoints,
+        # which `continue` first; unregistered prefixes fall through to 404.)
+        if ($path -match '^/api/([a-z0-9]+)/(results|status|scan|scan/cancel)$' -and $script:toolByPrefix.ContainsKey($matches[1])) {
+            $tool   = $script:toolByPrefix[$matches[1]]
+            $action = $matches[2]
+            $entry  = $script:toolJobs[$tool.Prefix]
+
+            if ($action -eq 'results' -and $req.HttpMethod -eq 'GET') {
+                Send-CachedFile $context -path $tool.ResultsPath -emptyBody '{"ScanMetadata":null,"Items":[],"Errors":[]}'
+                continue
+            }
+
+            if ($action -eq 'status' -and $req.HttpMethod -eq 'GET') {
+                if ($entry.Job) {
+                    $jobState = $entry.Job.State
+                    if ($jobState -eq 'Completed') {
+                        $null = Receive-Job $entry.Job -Keep
+                        $entry.Status = @{ State = 'completed'; Message = 'Scan completed successfully.' }
+                        Remove-Job $entry.Job -Force; $entry.Job = $null
+                    } elseif ($jobState -eq 'Failed') {
+                        $jobErrors = $entry.Job.ChildJobs | ForEach-Object { $_.JobStateInfo.Reason.Message } | Where-Object { $_ }
+                        $err = if ($jobErrors) { $jobErrors -join '; ' } else { Receive-Job $entry.Job -Keep 2>&1 | Out-String }
+                        $entry.Status = @{ State = 'failed'; Message = $err.Trim() }
+                        Remove-Job $entry.Job -Force; $entry.Job = $null
+                    } elseif ($jobState -eq 'Running') {
+                        $entry.Status = @{ State = 'running'; Message = 'Scan in progress...' }
+                    }
+                }
+                $statusOut = @{} + $entry.Status
+                if (Test-Path $tool.ProgressPath) {
+                    try { $statusOut.Progress = Get-Content $tool.ProgressPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+                }
+                Send-Response $context -body ($statusOut | ConvertTo-Json -Depth 6)
+                continue
+            }
+
+            if ($action -eq 'scan' -and $req.HttpMethod -eq 'POST') {
+                if ($entry.Job -and $entry.Job.State -eq 'Running') {
+                    Send-Response $context -status 409 -body '{"error":"Scan already running."}'
+                    continue
+                }
+                if ($entry.Job) { Remove-Job $entry.Job -Force; $entry.Job = $null }
+
+                $scopeType = 'All'; $mgId = ''; $singleSub = ''; $resourceGrp = ''
+                $extraVals = @{}   # non-scope params (e.g. cost window, flow-log inputs) per the tool's Extra map
+                $reader = [System.IO.StreamReader]::new($req.InputStream)
+                try {
+                    $bodyText = $reader.ReadToEnd()
+                    if ($bodyText) {
+                        $bodyObj = $bodyText | ConvertFrom-Json
+                        $props   = $bodyObj.PSObject.Properties.Name
+                        if ($props -contains 'scopeType'            -and $bodyObj.scopeType)            { $scopeType   = [string]$bodyObj.scopeType }
+                        if ($props -contains 'managementGroupId'    -and $bodyObj.managementGroupId)    { $mgId        = [string]$bodyObj.managementGroupId }
+                        if ($props -contains 'singleSubscriptionId' -and $bodyObj.singleSubscriptionId) { $singleSub   = [string]$bodyObj.singleSubscriptionId }
+                        if ($props -contains 'resourceGroup'        -and $bodyObj.resourceGroup)        { $resourceGrp = [string]$bodyObj.resourceGroup }
+                        if ($tool.ContainsKey('Extra')) {
+                            foreach ($m in $tool.Extra) {
+                                if ($props -contains $m.Body -and $null -ne $bodyObj.$($m.Body) -and "$($bodyObj.$($m.Body))" -ne '') {
+                                    $extraVals[$m.Param] = if ($m.ContainsKey('Int') -and $m.Int) { [int]$bodyObj.$($m.Body) } else { [string]$bodyObj.$($m.Body) }
+                                }
+                            }
+                        }
+                    }
+                } catch {
+                    Write-Warning "Failed to parse /api/$($tool.Prefix)/scan body: $($_.Exception.Message)"
+                } finally { $reader.Dispose() }
+
+                if (Test-Path $tool.ProgressPath) { Remove-Item $tool.ProgressPath -Force -ErrorAction SilentlyContinue }
+                $entry.Status = @{ State = 'running'; StartedAt = (Get-Date -Format 'o'); Message = "Scan started ($($tool.Slug))." }
+
+                $entry.Job = Start-ThreadJob -ScriptBlock {
+                    param($script, $output, $progress, $scopeMode, $scopeType, $mgId, $subId, $rg, $extra)
+                    $p = @{ OutputPath = $output; ProgressPath = $progress }
+                    # Only scope-based tools get the scope params; 'params'/'none' tools take none.
+                    if ($scopeMode -eq 'graph' -or $scopeMode -eq 'subscription') {
+                        $p['ScopeType'] = $scopeType
+                        if ($mgId)  { $p['ManagementGroupId']    = $mgId }
+                        if ($subId) { $p['SingleSubscriptionId'] = $subId }
+                        if ($scopeMode -eq 'graph' -and $rg) { $p['ResourceGroup'] = $rg }
+                    }
+                    if ($extra) { foreach ($k in $extra.Keys) { $p[$k] = $extra[$k] } }
+                    & $script @p
+                } -ArgumentList $tool.ScanScript, $tool.ResultsPath, $tool.ProgressPath, $tool.Scope, $scopeType, $mgId, $singleSub, $resourceGrp, $extraVals
+
+                Send-Response $context -body ($entry.Status | ConvertTo-Json)
+                continue
+            }
+
+            if ($action -eq 'scan/cancel' -and $req.HttpMethod -eq 'POST') {
+                if ($entry.Job -and $entry.Job.State -eq 'Running') {
+                    Stop-Job $entry.Job -ErrorAction SilentlyContinue
+                    Remove-Job $entry.Job -Force -ErrorAction SilentlyContinue
+                    $entry.Job = $null
+                    $entry.Status = @{ State = 'cancelled'; StartedAt = $null; Message = 'Scan cancelled by user.' }
+                    if (Test-Path $tool.ProgressPath) { Remove-Item $tool.ProgressPath -Force -ErrorAction SilentlyContinue }
+                    Send-Response $context -body ($entry.Status | ConvertTo-Json)
+                } else {
+                    Send-Response $context -status 409 -body '{"error":"No scan is currently running."}'
+                }
+                continue
+            }
+        }
+
         # ── 404 ─────────────────────────────────────────────────────────────
         Send-Response $context -status 404 -body '{"error":"Not found"}'
       } catch {
@@ -1156,5 +1313,6 @@ try {
     if ($tagScanJob) { Remove-Job $tagScanJob -Force }
     if ($laScanJob) { Remove-Job $laScanJob -Force }
     if ($quotaScanJob) { Remove-Job $quotaScanJob -Force }
+    foreach ($entry in $script:toolJobs.Values) { if ($entry.Job) { Remove-Job $entry.Job -Force } }
     Write-Host "Server stopped." -ForegroundColor Yellow
 }
