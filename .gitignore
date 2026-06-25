@@ -12,7 +12,7 @@ scan-progress.json
 # ── Local-only Claude Code settings ──────────────────────────────────────
 # launch.json IS tracked (shared preview config); local permission overrides
 # are per-machine.
-.claude/settings.local.json
+.claude/*
 
 # ── Misc ─────────────────────────────────────────────────────────────────
 text.txt
