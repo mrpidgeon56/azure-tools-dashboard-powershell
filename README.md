@@ -5,7 +5,7 @@ issues and visualizes the results locally. It's a set of PowerShell scanners and
 single-file HTML dashboards served by a small local web server — no build step, no
 package manager, no database.
 
-The tools in the hub:
+The hub bundles **25 tools**. The six core ones:
 
 | Tool | What it finds |
 |------|---------------|
@@ -15,6 +15,14 @@ The tools in the hub:
 | **Tag Auditor** | Objects whose *effective* (inherited) tags violate your required-tag rules. |
 | **Log Analytics Cost Projector** | Per-table cost projection for a workspace from billable ingestion + retention. |
 | **Quota Usage Scanner** | Compute / Network / Storage usage-vs-limit, flagged Critical / Warning, with an action per quota. |
+
+…plus ~19 more across **security & exposure** (attack surface, storage posture, NSG risk, Defender
+secure score, certificate expiry, app/SP credential expiry, **active SAS keys**), **governance**
+(policy compliance, policy exemptions, deployment tracking), **resilience & ops** (backup coverage,
+AZ/redundancy audit, resource & service health, diagnostics coverage), and **cost & networking**
+(cost anomalies, reservation/right-sizing, network topology, VNet flow-log coverage + analyzer).
+Open the dashboard to see them all. Newer tools are registered declaratively (`$script:portedTools`
+in `Start-Dashboard.ps1`) and served by a generic endpoint dispatcher.
 
 ## Prerequisites
 
