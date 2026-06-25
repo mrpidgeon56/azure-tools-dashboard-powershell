@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VNet Flow Logs Analyzer</title>
+<style>
+  :root {
+    --bg:        #0f1117;
+    --surface:   #1a1d27;
+    --surface2:  #222535;
+    --border:    #2e3250;
+    --text:      #e2e8f0;
+    --muted:     #8892a4;
+    --accent:    #4f81f7;
+    --danger:    #f06a6a;
+    --warn:      #f5a623;
+    --ok:        #52c78f;
+    --sub:       #b47fe8;
+    --rg:        #5bc0de;
+    --res:       #8892a4;
+    --radius:    8px;
+    --font:      "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; min-height: 100vh; }
+  a { color: inherit; }
+
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 14px 28px; display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .logo { font-size: 22px; }
+  .crumbs { font-size: 12px; color: var(--muted); }
+  .crumbs a { color: var(--muted); text-decoration: none; }
+  .crumbs a:hover { color: var(--accent); }
+  h1 { font-size: 17px; font-weight: 600; letter-spacing: -.2px; }
+  .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+  button {
+    font-family: var(--font); font-size: 13px; cursor: pointer;
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 13px; transition: border-color .15s, background .15s;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { background: #3f6fe0; }
+  button.ghost { background: transparent; }
+
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 28px 60px; }
+
+  /* ── empty state ───────────────────────────────────────────── */
+  .empty {
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 70px 20px; gap: 14px;
+  }
+  body.needs-data .empty { display: flex; }
+  body.needs-data .has-data { display: none !important; }
+  .empty .big { font-size: 46px; }
+  .empty h2 { font-size: 20px; font-weight: 700; }
+  .empty p { color: var(--muted); max-width: 520px; line-height: 1.5; }
+
+  /* ── progress ──────────────────────────────────────────────── */
+  .scan-banner {
+    display: none; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px; margin-bottom: 20px;
+  }
+  .scan-banner.active { display: block; }
+  .scan-banner .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .scan-banner .phase { font-weight: 600; }
+  .scan-banner .pct { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar { height: 7px; background: var(--surface2); border-radius: 999px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--sub)); transition: width .3s; }
+  .scan-log { margin-top: 10px; font-size: 12px; color: var(--muted); font-family: ui-monospace, monospace; max-height: 86px; overflow-y: auto; line-height: 1.5; }
+
+  /* ── selectors panel ───────────────────────────────────────── */
+  .selectors { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 20px; }
+  .selectors h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .selectors .hint { font-size: 12px; color: var(--muted); margin-bottom: 14px; line-height: 1.45; }
+  .sel-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 760px) { .sel-grid { grid-template-columns: 1fr; } }
+  .sel-grid label.lbl { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .sel-grid input, .sel-grid select {
+    width: 100%; box-sizing: border-box; background: var(--surface2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+    font-size: 13px; font-family: var(--font);
+  }
+  .sel-grid input::placeholder { color: var(--muted); }
+  .sel-run { display: flex; justify-content: flex-end; margin-top: 14px; }
+
+  /* ── cards ─────────────────────────────────────────────────── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+  .card-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 7px; }
+  .card-value { font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
+  .card-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .card.accent .card-value { color: var(--accent); }
+  .card.sub .card-value { color: var(--sub); }
+  .card.rg .card-value { color: var(--rg); }
+  .card.ok .card-value { color: var(--ok); }
+  .card.flagged .card-value { color: var(--danger); }
+
+  /* ── summary tables (aggregates) ───────────────────────────── */
+  .agg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-bottom: 22px; }
+  .agg { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+  .agg h3 { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .agg .ahint { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+  .agg table { width: 100%; border-collapse: collapse; }
+  .agg th, .agg td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; font-size: 13px; }
+  .agg th { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+  .agg th.num, .agg td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .agg tr:last-child td { border-bottom: none; }
+  .agg .lbl-name { font-weight: 500; }
+  /* inline proportion bar inside summary tables */
+  .miniwrap { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+  .minibar { flex: 1; height: 6px; background: var(--surface2); border-radius: 999px; overflow: hidden; }
+  .minibar > i { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+  .minibar > i.allowed { background: var(--ok); }
+  .minibar > i.denied { background: var(--danger); }
+  .minibar > i.inbound { background: var(--rg); }
+  .minibar > i.outbound { background: var(--sub); }
+  .agg .agg-empty { color: var(--muted); font-size: 12px; padding: 8px; }
+
+  /* ── toolbar ───────────────────────────────────────────────── */
+  .section-title { font-size: 15px; font-weight: 600; margin: 4px 0 12px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .search-wrap { position: relative; flex: 1; min-width: 220px; max-width: 380px; }
+  .search-wrap input {
+    width: 100%; font-family: var(--font); font-size: 13px; background: var(--surface2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 11px 7px 34px;
+  }
+  .search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; font-size: 13px; }
+  .toolbar input::placeholder { color: var(--muted); }
+  .toolbar .spacer { flex: 1; }
+  .filter-summary { font-size: 12px; color: var(--muted); }
+  .export-btn { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .export-btn:hover { background: #3f6fe0; }
+
+  /* ── table ─────────────────────────────────────────────────── */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface); }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th .sort-indicator { color: var(--accent); margin-left: 4px; }
+  tbody tr { cursor: pointer; transition: background .1s; }
+  tbody tr:hover { background: var(--surface2); }
+  .table-name { font-weight: 500; }
+  .empty-rows { text-align: center; color: var(--muted); padding: 40px; }
+
+  /* severity / decision pills (token-driven, no hex) */
+  .status-pill, .proto-pill, .dir-pill {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border);
+  }
+  .status-pill.high { color: var(--danger); border-color: var(--danger); }
+  .status-pill.medium { color: var(--warn); border-color: var(--warn); }
+  .status-pill.low { color: var(--muted); border-color: var(--border); }
+  .status-pill.ok { color: var(--ok); border-color: var(--ok); }
+  .proto-pill.TCP { color: var(--rg); border-color: var(--rg); }
+  .proto-pill.UDP { color: var(--sub); border-color: var(--sub); }
+  .proto-pill.ICMP { color: var(--warn); border-color: var(--warn); }
+  .dir-pill.Inbound { color: var(--rg); border-color: var(--rg); }
+  .dir-pill.Outbound { color: var(--sub); border-color: var(--sub); }
+
+  /* ── pager ─────────────────────────────────────────────────── */
+  .pager { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; }
+  .pager button { padding: 5px 11px; min-width: 34px; }
+  .pager button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pager .ell { color: var(--muted); padding: 0 4px; }
+
+  /* ── detail panel ──────────────────────────────────────────── */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 90; display: none; }
+  .overlay.open { display: block; }
+  .detail { position: fixed; top: 0; right: 0; height: 100%; width: 440px; max-width: 92vw; background: var(--surface); border-left: 1px solid var(--border); z-index: 100; transform: translateX(100%); transition: transform .2s; overflow-y: auto; }
+  .detail.open { transform: translateX(0); }
+  .detail .dhead { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+  .detail .dhead h3 { font-size: 15px; font-weight: 600; word-break: break-all; }
+  .detail .dbody { padding: 20px; }
+  .detail .drow { margin-bottom: 16px; }
+  .detail .drow .k { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 4px; }
+  .detail .drow .v { font-size: 14px; word-break: break-all; }
+  .rec-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
+  .rec-box .ra { font-weight: 600; margin-bottom: 4px; }
+  .rec-box .rr { font-size: 13px; color: var(--muted); line-height: 1.4; }
+
+  /* ── light theme (toggled via .light on <html>) ──────────────── */
+  html.light {
+    --bg:       #f4f6fb;
+    --surface:  #ffffff;
+    --surface2: #eef1f7;
+    --border:   #d4d9e6;
+    --text:     #1c2230;
+    --muted:    #5c6679;
+    --accent:   #3a6ae0;
+  }
+  /* ── theme toggle (fixed, bottom-left) ───────────────────────── */
+  .theme-toggle {
+    position: fixed; left: 18px; bottom: 18px; z-index: 50;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 8px 14px; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    transition: border-color .15s, background .15s, color .15s;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle .ico { font-size: 15px; line-height: 1; }
+</style>
+<script>
+  // Apply the saved theme before first paint to avoid a flash of the wrong theme.
+  (function () {
+    try { if (localStorage.getItem('azureHub.theme') === 'light') document.documentElement.classList.add('light'); } catch (e) {}
+  })();
+</script>
+</head>
+<body class="needs-data">
+
+<header>
+  <span class="logo">📊</span>
+  <div>
+    <div class="crumbs"><a href="/">Azure Engineering</a> › VNet Flow Logs Analyzer</div>
+    <h1>VNet Flow Logs Analyzer</h1>
+  </div>
+  <div class="header-actions">
+    <button id="refreshBtn" class="ghost" onclick="loadResults(true)" title="Reload last analysis">↻</button>
+    <button id="cancelBtn" class="ghost" onclick="cancelScan()" style="display:none;">Cancel</button>
+  </div>
+</header>
+
+<main>
+  <!-- scanner configuration (always visible) -->
+  <div class="selectors">
+    <h3>⚙ Scanner configuration</h3>
+    <div class="hint">Point the analyzer at a VNet flow log's storage account. Provide the
+       <b>storage account</b> (and optionally the <b>flow log resource id</b> — used to derive
+       the blob path prefix and resolve the storage account when it's left blank). Records are
+       read straight out of blob storage for the chosen lookback window. This is a
+       <b>data-plane</b> read: the signed-in identity needs <b>Storage Blob Data Reader</b> on
+       the storage account, not just ARM Reader.</div>
+    <div class="sel-grid">
+      <div>
+        <label class="lbl" for="inStorage">Storage account <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="inStorage" placeholder="e.g. flowlogsstorage01" oninput="updateScanBtn()" />
+      </div>
+      <div>
+        <label class="lbl" for="inFlowLogId">Flow log resource id</label>
+        <input type="text" id="inFlowLogId" placeholder="/subscriptions/…/flowLogs/myflowlog" oninput="updateScanBtn()" />
+      </div>
+      <div>
+        <label class="lbl" for="inFlowLogName">Flow log name</label>
+        <input type="text" id="inFlowLogName" placeholder="(optional label)" />
+      </div>
+      <div>
+        <label class="lbl" for="inVnet">VNet name</label>
+        <input type="text" id="inVnet" placeholder="(optional label)" />
+      </div>
+      <div>
+        <label class="lbl" for="inPrefix">Path prefix</label>
+        <input type="text" id="inPrefix" placeholder="(auto from flow log id)" />
+      </div>
+      <div>
+        <label class="lbl" for="inContainer">Container</label>
+        <input type="text" id="inContainer" value="insights-logs-flowlogflowevent" />
+      </div>
+      <div>
+        <label class="lbl" for="inHours">Lookback (hours)</label>
+        <input type="number" id="inHours" value="24" min="1" max="720" />
+      </div>
+      <div>
+        <label class="lbl" for="inMaxBlobs">Max blobs</label>
+        <input type="number" id="inMaxBlobs" value="300" min="1" max="5000" />
+      </div>
+    </div>
+    <div class="sel-run">
+      <button id="scanBtn" class="primary" onclick="startScan()" disabled>▶ Analyze Flow Logs</button>
+    </div>
+  </div>
+
+  <!-- empty state -->
+  <div class="empty">
+    <div class="big">📊</div>
+    <h2>No flow-log analysis yet</h2>
+    <p>Provide a VNet flow log's storage account above and run the analyzer. It reads flow-log
+       blob contents over the lookback window and builds a traffic picture: top talkers, top
+       destinations, busiest ports, protocol mix, allowed-vs-denied, inbound-vs-outbound, plus
+       a table of the heaviest individual flows.</p>
+  </div>
+
+  <!-- progress -->
+  <div class="scan-banner" id="scanBanner">
+    <div class="top">
+      <span class="phase" id="scanPhase">Starting…</span>
+      <span class="pct" id="scanPct">0%</span>
+    </div>
+    <div class="bar"><i id="scanBar"></i></div>
+    <div class="scan-log" id="scanLog"></div>
+  </div>
+
+  <!-- summary cards -->
+  <div class="cards has-data">
+    <div class="card"><div class="card-label">Flows parsed</div><div class="card-value" id="cFlows">—</div><div class="card-sub" id="cFlowsSub"></div></div>
+    <div class="card accent"><div class="card-label">Total bytes</div><div class="card-value" id="cBytes">—</div><div class="card-sub" id="cPackets"></div></div>
+    <div class="card sub"><div class="card-label">Unique sources</div><div class="card-value" id="cSrc">—</div><div class="card-sub">src IPs</div></div>
+    <div class="card rg"><div class="card-label">Unique dests</div><div class="card-value" id="cDst">—</div><div class="card-sub">dest IPs</div></div>
+    <div class="card ok"><div class="card-label">Allowed</div><div class="card-value" id="cAllowed">—</div><div class="card-sub" id="cAllowedSub"></div></div>
+    <div class="card flagged"><div class="card-label">Denied</div><div class="card-value" id="cDenied">—</div><div class="card-sub" id="cDeniedSub"></div></div>
+  </div>
+
+  <!-- aggregate summary tables -->
+  <div class="agg-grid has-data">
+    <div class="agg">
+      <h3>Top talkers</h3><div class="ahint">Busiest source IPs by bytes</div>
+      <table><thead><tr><th>Source IP</th><th class="num">Bytes</th><th class="num">Records</th></tr></thead><tbody id="aTalkers"></tbody></table>
+    </div>
+    <div class="agg">
+      <h3>Top destinations</h3><div class="ahint">Busiest destination IPs by bytes</div>
+      <table><thead><tr><th>Dest IP</th><th class="num">Bytes</th><th class="num">Records</th></tr></thead><tbody id="aDests"></tbody></table>
+    </div>
+    <div class="agg">
+      <h3>Top ports</h3><div class="ahint">Busiest destination ports by bytes</div>
+      <table><thead><tr><th>Port</th><th class="num">Bytes</th><th class="num">Records</th></tr></thead><tbody id="aPorts"></tbody></table>
+    </div>
+    <div class="agg">
+      <h3>Protocol mix</h3><div class="ahint">Flow records by protocol</div>
+      <table><thead><tr><th>Protocol</th><th class="num">Records</th><th>Share</th></tr></thead><tbody id="aProto"></tbody></table>
+    </div>
+    <div class="agg">
+      <h3>Allowed vs denied</h3><div class="ahint">Flow records by decision</div>
+      <table><thead><tr><th>Decision</th><th class="num">Records</th><th>Share</th></tr></thead><tbody id="aDecision"></tbody></table>
+    </div>
+    <div class="agg">
+      <h3>Inbound vs outbound</h3><div class="ahint">Flow records by direction</div>
+      <table><thead><tr><th>Direction</th><th class="num">Records</th><th>Share</th></tr></thead><tbody id="aDirection"></tbody></table>
+    </div>
+  </div>
+
+  <!-- heaviest flows -->
+  <div class="has-data">
+    <div class="section-title">Heaviest individual flows</div>
+    <div class="toolbar">
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search" placeholder="Filter flows by IP, port, protocol…" oninput="onSearch()" />
+      </div>
+      <span class="spacer"></span>
+      <span class="filter-summary" id="filterSummary"></span>
+      <button class="export-btn" onclick="exportCsv()">Export CSV</button>
+    </div>
+
+    <div class="table-wrap">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th data-key="SrcIp" onclick="sortBy('SrcIp')">Source<span class="sort-indicator"></span></th>
+            <th data-key="DestIp" onclick="sortBy('DestIp')">Destination<span class="sort-indicator"></span></th>
+            <th data-key="DestPort" onclick="sortBy('DestPort')">Port<span class="sort-indicator"></span></th>
+            <th data-key="Protocol" onclick="sortBy('Protocol')">Proto<span class="sort-indicator"></span></th>
+            <th data-key="Direction" onclick="sortBy('Direction')">Direction<span class="sort-indicator"></span></th>
+            <th data-key="Decision" onclick="sortBy('Decision')">Decision<span class="sort-indicator"></span></th>
+            <th class="num" data-key="Records" onclick="sortBy('Records')">Records<span class="sort-indicator"></span></th>
+            <th class="num" data-key="Packets" onclick="sortBy('Packets')">Packets<span class="sort-indicator"></span></th>
+            <th class="num" data-key="Bytes" onclick="sortBy('Bytes')">Bytes<span class="sort-indicator"></span></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div class="pager" id="pager"></div>
+    </div>
+  </div>
+</main>
+
+<!-- detail panel -->
+<div class="overlay" id="overlay" onclick="closeDetail()"></div>
+<aside class="detail" id="detail">
+  <div class="dhead">
+    <h3 id="dTitle">Flow</h3>
+    <button class="ghost" onclick="closeDetail()">✕</button>
+  </div>
+  <div class="dbody" id="dBody"></div>
+</aside>
+
+<button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">
+  <span class="ico" id="themeIco">🌙</span><span id="themeLabel">Dark</span>
+</button>
+
+<script>
+  /* ── helpers ─────────────────────────────────────────────────── */
+  function asArray(v) { return Array.isArray(v) ? v : (v == null ? [] : [v]); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+  let META = null;          // ScanMetadata of the loaded analysis
+  let ROWS = [];            // heaviest-flow records (Items)
+  let sortKey = 'Bytes', sortDir = -1;
+  let currentPage = 1;
+  const PAGE = 25;
+  let pollTimer = null;
+  let _filterCache = null;
+
+  function fmtNum(v) { return Number(v || 0).toLocaleString('en-US'); }
+  function fmtBytes(v) {
+    let n = Number(v || 0);
+    const u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    let i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return n.toLocaleString('en-US', { maximumFractionDigits: n < 10 && i > 0 ? 2 : (i > 0 ? 1 : 0) }) + ' ' + u[i];
+  }
+
+  /* ── scan lifecycle ──────────────────────────────────────────── */
+  function scanParams() {
+    const storage = document.getElementById('inStorage').value.trim();
+    const flowLogId = document.getElementById('inFlowLogId').value.trim();
+    if (!storage && !flowLogId) return null;   // need at least one to locate the blobs
+    return {
+      storageAccount: storage,
+      flowLogId: flowLogId,
+      flowLogName: document.getElementById('inFlowLogName').value.trim(),
+      vnetName: document.getElementById('inVnet').value.trim(),
+      pathPrefix: document.getElementById('inPrefix').value.trim(),
+      container: document.getElementById('inContainer').value.trim() || 'insights-logs-flowlogflowevent',
+      lookbackHours: Number(document.getElementById('inHours').value) || 24,
+      maxBlobs: Number(document.getElementById('inMaxBlobs').value) || 300
+    };
+  }
+
+  function updateScanBtn() {
+    document.getElementById('scanBtn').disabled = !scanParams();
+  }
+
+  async function startScan() {
+    const p = scanParams();
+    if (!p) { alert('Enter a storage account (or a flow log resource id) first.'); return; }
+    try {
+      const r = await fetch('/api/vnetflowlogs/scan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(p)
+      });
+      if (r.status === 409) { alert('An analysis is already running.'); return; }
+      if (!r.ok) { const e = await r.json().catch(() => ({})); alert('Could not start: ' + (e.error || 'unknown error')); return; }
+      setScanning(true);
+      pollStatus();
+    } catch { alert('Could not reach the dashboard server. Is Start-Dashboard.ps1 running?'); }
+  }
+
+  async function cancelScan() {
+    try { await fetch('/api/vnetflowlogs/scan/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch {}
+  }
+
+  function setScanning(on) {
+    document.getElementById('scanBtn').disabled = on || !scanParams();
+    document.getElementById('cancelBtn').style.display = on ? '' : 'none';
+    document.getElementById('scanBanner').classList.toggle('active', on);
+  }
+
+  async function pollStatus() {
+    if (pollTimer) clearTimeout(pollTimer);
+    try {
+      const r = await fetch('/api/vnetflowlogs/status');
+      const s = await r.json();
+      const prog = s.Progress;
+      if (prog) {
+        document.getElementById('scanPhase').textContent = prog.Message || (prog.Phase === 'done' ? 'Finishing…' : 'Analyzing…');
+        document.getElementById('scanPct').textContent = (prog.Percent ?? 0) + '%';
+        document.getElementById('scanBar').style.width = (prog.Percent ?? 0) + '%';
+        document.getElementById('scanLog').innerHTML = asArray(prog.LogTail).map(l => `<div>${esc(l)}</div>`).join('');
+      }
+      if (s.State === 'running') {
+        pollTimer = setTimeout(pollStatus, 1200);
+      } else {
+        setScanning(false);
+        if (s.State === 'failed') {
+          document.getElementById('scanPhase').textContent = 'Analysis failed: ' + (s.Message || 'unknown error');
+          document.getElementById('scanBanner').classList.add('active');
+        } else if (s.State !== 'cancelled') {
+          await loadResults(false);
+        }
+      }
+    } catch {
+      setScanning(false);
+    }
+  }
+
+  /* ── load + render ───────────────────────────────────────────── */
+  async function loadResults(manual) {
+    try {
+      const r = await fetch('/api/vnetflowlogs/results');
+      if (!r.ok) throw new Error();
+      applyData(await r.json());
+    } catch {
+      if (manual) alert('Could not reach the dashboard server.');
+    }
+  }
+
+  function applyData(json) {
+    if (!json || !json.ScanMetadata || !asArray(json.Items).length) {
+      document.body.classList.add('needs-data');
+      return;
+    }
+    META = json.ScanMetadata;
+    ROWS = asArray(json.Items);
+    document.body.classList.remove('needs-data');
+    _filterCache = null;
+    currentPage = 1;
+    renderCards();
+    renderAggregates();
+    renderTable();
+  }
+
+  function renderCards() {
+    document.getElementById('cFlows').textContent = fmtNum(META.FlowsParsed);
+    document.getElementById('cFlowsSub').textContent =
+      `${esc(META.FlowLogName || '')}${META.StorageAccount ? ' · ' + esc(META.StorageAccount) : ''} · ${META.BlobsProcessed ?? 0} blob(s)`;
+    document.getElementById('cBytes').textContent = fmtBytes(META.TotalBytes);
+    document.getElementById('cPackets').textContent = fmtNum(META.TotalPackets) + ' packets';
+    document.getElementById('cSrc').textContent = fmtNum(META.UniqueSrcIps);
+    document.getElementById('cDst').textContent = fmtNum(META.UniqueDestIps);
+    document.getElementById('cAllowed').textContent = fmtNum(META.AllowedFlows);
+    document.getElementById('cDenied').textContent = fmtNum(META.DeniedFlows);
+    const win = `${META.WindowHours ?? '?'}h window`;
+    document.getElementById('cAllowedSub').textContent = win;
+    document.getElementById('cDeniedSub').textContent = META.VnetName ? esc(META.VnetName) : win;
+  }
+
+  function aggRows(list, keyName, valName) {
+    const rows = asArray(list);
+    if (!rows.length) return '<tr><td colspan="3" class="agg-empty">No data.</td></tr>';
+    const max = Math.max(1, ...rows.map(r => Number(r[valName] || 0)));
+    return rows.map(r => {
+      const v = Number(r[valName] || 0);
+      const w = Math.max(2, Math.round(v / max * 100));
+      return `<tr>
+        <td class="lbl-name">${esc(r[keyName])}</td>
+        <td class="num">${fmtBytes(v)}</td>
+        <td class="num">${fmtNum(r.Records)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // share-style tables (records + proportion bar), with a class for bar colour
+  function shareRows(list, klassFor) {
+    const rows = asArray(list);
+    const tot = rows.reduce((a, r) => a + Number(r.Value || 0), 0);
+    if (!tot) return '<tr><td colspan="3" class="agg-empty">No data.</td></tr>';
+    return rows.map(r => {
+      const v = Number(r.Value || 0);
+      const pct = Math.round(v / tot * 100);
+      const klass = klassFor ? klassFor(r.Name) : '';
+      return `<tr>
+        <td class="lbl-name">${esc(r.Name)}</td>
+        <td class="num">${fmtNum(v)}</td>
+        <td><div class="miniwrap"><div class="minibar"><i class="${klass}" style="width:${pct}%"></i></div><span>${pct}%</span></div></td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderAggregates() {
+    document.getElementById('aTalkers').innerHTML = aggRows(META.TopTalkers, 'Ip', 'Bytes');
+    document.getElementById('aDests').innerHTML = aggRows(META.TopDestinations, 'Ip', 'Bytes');
+    // top ports use Label as the key
+    const ports = asArray(META.TopPorts);
+    document.getElementById('aPorts').innerHTML = ports.length
+      ? ports.map(r => {
+          return `<tr><td class="lbl-name">${esc(r.Label || r.Port)}</td><td class="num">${fmtBytes(r.Bytes)}</td><td class="num">${fmtNum(r.Records)}</td></tr>`;
+        }).join('')
+      : '<tr><td colspan="3" class="agg-empty">No data.</td></tr>';
+    document.getElementById('aProto').innerHTML = shareRows(META.Protocols, n => '');
+    document.getElementById('aDecision').innerHTML = shareRows(META.Decision, n => n === 'Denied' ? 'denied' : 'allowed');
+    document.getElementById('aDirection').innerHTML = shareRows(META.Direction, n => n === 'Inbound' ? 'inbound' : 'outbound');
+  }
+
+  function getFilteredRows() {
+    if (_filterCache) return _filterCache;
+    const q = (document.getElementById('search').value || '').toLowerCase().trim();
+    let rows = q ? ROWS.filter(r =>
+      [r.SrcIp, r.DestIp, r.DestPort, r.PortLabel, r.Protocol, r.Direction, r.Decision]
+        .join(' ').toLowerCase().includes(q)) : ROWS.slice();
+    rows.sort((a, b) => {
+      let av = a[sortKey], bv = b[sortKey];
+      if (typeof av === 'number' || typeof bv === 'number') return ((Number(av) || 0) - (Number(bv) || 0)) * sortDir;
+      return String(av ?? '').localeCompare(String(bv ?? '')) * sortDir;
+    });
+    _filterCache = rows;
+    return rows;
+  }
+
+  function sortBy(key) {
+    if (sortKey === key) { sortDir *= -1; }
+    else { sortKey = key; sortDir = ['Records', 'Packets', 'Bytes', 'DestPort'].includes(key) ? -1 : 1; }
+    _filterCache = null;
+    currentPage = 1;
+    renderTable();
+  }
+
+  function statusPill(sev) {
+    const map = { high: '⛔ High', medium: '⚠ Medium', low: 'Low', ok: '✓ OK' };
+    return `<span class="status-pill ${esc(sev)}">${map[sev] || esc(sev)}</span>`;
+  }
+
+  function renderTable() {
+    const rows = getFilteredRows();
+    document.querySelectorAll('th .sort-indicator').forEach(s => s.textContent = '');
+    const th = document.querySelector(`th[data-key="${sortKey}"] .sort-indicator`);
+    if (th) th.textContent = sortDir > 0 ? '▲' : '▼';
+
+    const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+    if (currentPage > pages) currentPage = pages;
+    const slice = rows.slice((currentPage - 1) * PAGE, currentPage * PAGE);
+
+    const tbody = document.getElementById('tbody');
+    if (!slice.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-rows">No flows match the filter.</td></tr>';
+    } else {
+      tbody.innerHTML = slice.map(r => {
+        const gi = rows.indexOf(r);
+        const decisionPill = r.Decision === 'Denied' ? statusPill('medium') : statusPill('ok');
+        return `<tr onclick="openDetail(${gi})">
+          <td class="table-name">${esc(r.SrcIp)}</td>
+          <td>${esc(r.DestIp)}</td>
+          <td>${esc(r.PortLabel || r.DestPort || '—')}</td>
+          <td><span class="proto-pill ${esc(r.Protocol)}">${esc(r.Protocol)}</span></td>
+          <td><span class="dir-pill ${esc(r.Direction)}">${esc(r.Direction)}</span></td>
+          <td>${decisionPill}</td>
+          <td class="num">${fmtNum(r.Records)}</td>
+          <td class="num">${fmtNum(r.Packets)}</td>
+          <td class="num">${fmtBytes(r.Bytes)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    document.getElementById('filterSummary').textContent =
+      `${rows.length} of ${ROWS.length} flow${ROWS.length === 1 ? '' : 's'}`;
+    renderPager(pages);
+  }
+
+  function renderPager(pages) {
+    const el = document.getElementById('pager');
+    if (pages <= 1) { el.innerHTML = ''; return; }
+    let html = `<button onclick="goPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>‹</button>`;
+    for (let p = 1; p <= pages; p++) {
+      if (p === 1 || p === pages || Math.abs(p - currentPage) <= 1) {
+        html += `<button class="${p === currentPage ? 'active' : ''}" onclick="goPage(${p})">${p}</button>`;
+      } else if (p === currentPage - 2 || p === currentPage + 2) {
+        html += `<span class="ell">…</span>`;
+      }
+    }
+    html += `<button onclick="goPage(${currentPage + 1})" ${currentPage === pages ? 'disabled' : ''}>›</button>`;
+    el.innerHTML = html;
+  }
+  function goPage(p) { currentPage = p; renderTable(); }
+  function onSearch() { _filterCache = null; currentPage = 1; renderTable(); }
+
+  /* ── detail panel ────────────────────────────────────────────── */
+  function openDetail(gi) {
+    const rows = getFilteredRows();
+    const r = rows[gi];
+    if (!r) return;
+    const rec = r.RecommendedAction || {};
+    document.getElementById('dTitle').textContent = `${r.SrcIp} → ${r.DestIp}:${r.DestPort}`;
+    document.getElementById('dBody').innerHTML = `
+      <div class="drow"><div class="k">Decision</div><div class="v">${r.Decision === 'Denied' ? statusPill('medium') : statusPill('ok')} ${esc(r.Decision)}</div></div>
+      <div class="drow"><div class="k">Source → Destination</div><div class="v">${esc(r.SrcIp)} → ${esc(r.DestIp)}</div></div>
+      <div class="drow"><div class="k">Port</div><div class="v">${esc(r.PortLabel || r.DestPort || '—')}</div></div>
+      <div class="drow"><div class="k">Protocol</div><div class="v"><span class="proto-pill ${esc(r.Protocol)}">${esc(r.Protocol)}</span></div></div>
+      <div class="drow"><div class="k">Direction</div><div class="v"><span class="dir-pill ${esc(r.Direction)}">${esc(r.Direction)}</span></div></div>
+      <div class="drow"><div class="k">Volume</div><div class="v">${fmtBytes(r.Bytes)} · ${fmtNum(r.Packets)} packets · ${fmtNum(r.Records)} record(s)</div></div>
+      <div class="drow"><div class="k">Recommendation</div>
+        <div class="rec-box"><div class="ra">${esc(rec.Action || '—')}</div><div class="rr">${esc(rec.Reason || '')}</div></div>
+      </div>`;
+    document.getElementById('overlay').classList.add('open');
+    document.getElementById('detail').classList.add('open');
+  }
+  function closeDetail() {
+    document.getElementById('overlay').classList.remove('open');
+    document.getElementById('detail').classList.remove('open');
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+
+  /* ── CSV export (with formula-injection guard) ───────────────── */
+  function csvCell(v) {
+    let s = String(v == null ? '' : v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;          // neutralize spreadsheet formula injection
+    if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  function exportCsv() {
+    const rows = getFilteredRows();
+    if (!rows.length) { alert('Nothing to export.'); return; }
+    const header = ['SrcIp', 'DestIp', 'DestPort', 'PortLabel', 'Protocol', 'Direction', 'Decision', 'Records', 'Packets', 'Bytes'];
+    const lines = [header.join(',')];
+    rows.forEach(r => {
+      lines.push([r.SrcIp, r.DestIp, r.DestPort, r.PortLabel, r.Protocol, r.Direction, r.Decision, r.Records, r.Packets, r.Bytes].map(csvCell).join(','));
+    });
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `vnet-flow-logs-${(META.StorageAccount || 'flowlog')}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  /* ── theme toggle ────────────────────────────────────────────── */
+  function applyThemeButton() {
+    const light = document.documentElement.classList.contains('light');
+    document.getElementById('themeIco').textContent = light ? '☀️' : '🌙';
+    document.getElementById('themeLabel').textContent = light ? 'Light' : 'Dark';
+  }
+  function toggleTheme() {
+    const light = document.documentElement.classList.toggle('light');
+    try { localStorage.setItem('azureHub.theme', light ? 'light' : 'dark'); } catch (e) {}
+    applyThemeButton();
+  }
+  applyThemeButton();
+
+  /* ── boot ────────────────────────────────────────────────────── */
+  updateScanBtn();
+  loadResults(false);
+</script>
+</body>
+</html>
