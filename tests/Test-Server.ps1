@@ -78,3 +78,4 @@ finally {
 Write-Host ""
 if ($script:fail -gt 0) { Write-Host "SERVER TESTS: $script:fail FAILED" -ForegroundColor Red; exit 1 }
 Write-Host "SERVER TESTS: all passed" -ForegroundColor Green
+exit 0   # always set an explicit exit code so a caller's $LASTEXITCODE is defined (StrictMode-safe in a fresh session)

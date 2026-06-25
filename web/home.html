@@ -69,31 +69,36 @@
   .intro h2 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; margin-bottom: 6px; }
   .intro p  { color: var(--muted); max-width: 640px; line-height: 1.5; }
 
-  .tool-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 18px;
-  }
-  /* A tool card is the whole clickable surface. */
+  /* Horizontal card list: each tool is a full-width row (icon | body | foot). */
+  .tool-grid { display: flex; flex-direction: column; gap: 12px; }
+
   a.tool-card, div.tool-card {
-    display: flex; flex-direction: column; gap: 10px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 20px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 22px;
+    padding: 16px 22px;
     text-decoration: none;
     color: var(--text);
     transition: border-color .15s, transform .15s, box-shadow .15s;
   }
   a.tool-card:hover {
     border-color: var(--accent);
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0,0,0,.3);
+    transform: translateX(4px);
+    box-shadow: 0 6px 20px rgba(0,0,0,.28);
   }
-  .tool-icon { font-size: 28px; }
-  .tool-title { font-size: 16px; font-weight: 600; }
-  .tool-desc  { color: var(--muted); font-size: 13px; line-height: 1.5; flex: 1; }
-  .tool-foot  { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+  .tool-icon { font-size: 26px; line-height: 1; }
+  /* middle column — title, description, and live-state stats stacked */
+  .tool-body  { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .tool-title { font-size: 15px; font-weight: 600; }
+  .tool-desc  {
+    color: var(--muted); font-size: 13px; line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .tool-foot  { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; white-space: nowrap; }
   .tag {
     display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
     padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted);
@@ -117,6 +122,26 @@
   .tool-stats .stat b { color: var(--text); font-weight: 600; }
   .tool-stats .stat.flagged b { color: var(--danger); }
   .tool-stats .stat.savings b { color: var(--ok); }
+
+  /* ── header row: tool description on the left, quick search on the right ── */
+  .hub-head { display: flex; align-items: center; justify-content: space-between; gap: 28px; margin-bottom: 24px; flex-wrap: wrap; }
+  .hub-head .intro { margin-bottom: 0; flex: 1 1 360px; }
+  .hub-search-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: 0 1 auto; }
+  .hub-search {
+    display: flex; align-items: center; gap: 8px; width: 340px; max-width: 100%;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 9px 13px; transition: border-color .15s;
+  }
+  .hub-search:focus-within { border-color: var(--accent); }
+  .hub-search .ico { font-size: 14px; }
+  .hub-search input {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+    font-family: var(--font); font-size: 14px; color: var(--text);
+  }
+  .hub-search input::placeholder { color: var(--muted); }
+  .hub-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .no-results { display: none; color: var(--muted); text-align: center; padding: 36px 4px; }
+  body.no-matches .no-results { display: block; }
 
   /* ── light theme (toggled via .light on <html>) ──────────────── */
   html.light {
@@ -166,9 +191,18 @@
 </header>
 
 <main>
-  <div class="intro">
-    <h2>Tools</h2>
-    <p>Self-service utilities for understanding and cleaning up your Azure estate. Pick a tool to get started — more will be added here over time.</p>
+  <div class="hub-head">
+    <div class="intro">
+      <h2>Tools</h2>
+      <p>Self-service utilities for understanding and cleaning up your Azure estate. Pick a tool to get started — more will be added here over time.</p>
+    </div>
+    <div class="hub-search-wrap">
+      <label class="hub-search">
+        <span class="ico">🔍</span>
+        <input id="toolSearch" type="search" placeholder="Search tools…" autocomplete="off" aria-label="Search tools" />
+      </label>
+      <span class="hub-count" id="toolCount"></span>
+    </div>
   </div>
 
   <div class="tool-grid">
@@ -435,6 +469,8 @@
     </div>
 
   </div>
+
+  <div class="no-results">No tools match your search.</div>
 </main>
 
 <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">
@@ -729,6 +765,55 @@
     applyThemeButton();
   }
   applyThemeButton();
+
+  // ── Hub layout: horizontal cards, alphabetical order, quick search ────────
+  (function initHub() {
+    const grid = document.querySelector('.tool-grid');
+    if (!grid) return;
+    const cards = Array.from(grid.querySelectorAll('.tool-card'));
+
+    // Wrap title + description + live-state into a middle column (icon | body | foot).
+    cards.forEach(card => {
+      if (card.querySelector('.tool-body')) return;
+      const foot = card.querySelector('.tool-foot');
+      const body = document.createElement('div');
+      body.className = 'tool-body';
+      card.querySelectorAll('.tool-title, .tool-desc, .tool-stats').forEach(el => body.appendChild(el));
+      if (foot) card.insertBefore(body, foot); else card.appendChild(body);
+    });
+
+    // Sort alphabetically by title; the "More tools coming" placeholder stays last.
+    cards.sort((a, b) => {
+      const pa = a.classList.contains('placeholder'), pb = b.classList.contains('placeholder');
+      if (pa !== pb) return pa ? 1 : -1;
+      const ta = (a.querySelector('.tool-title')?.textContent || '').trim();
+      const tb = (b.querySelector('.tool-title')?.textContent || '').trim();
+      return ta.localeCompare(tb, undefined, { sensitivity: 'base' });
+    });
+    cards.forEach(c => grid.appendChild(c));
+
+    // Quick search over title + description + category tag (text captured now, before live-state fills in).
+    const placeholder = cards.find(c => c.classList.contains('placeholder'));
+    const realCards = cards.filter(c => c !== placeholder);
+    const haystack = new Map(realCards.map(c => [c, (c.textContent || '').replace(/\s+/g, ' ').toLowerCase()]));
+    const input = document.getElementById('toolSearch');
+    const count = document.getElementById('toolCount');
+
+    function applyFilter() {
+      const q = ((input && input.value) || '').trim().toLowerCase();
+      let shown = 0;
+      realCards.forEach(c => {
+        const match = !q || haystack.get(c).includes(q);
+        c.style.display = match ? '' : 'none';
+        if (match) shown++;
+      });
+      if (placeholder) placeholder.style.display = q ? 'none' : '';
+      document.body.classList.toggle('no-matches', shown === 0);
+      if (count) count.textContent = q ? `${shown} of ${realCards.length} tools` : `${realCards.length} tools`;
+    }
+    if (input) input.addEventListener('input', applyFilter);
+    applyFilter();
+  })();
 </script>
 
 </body>
