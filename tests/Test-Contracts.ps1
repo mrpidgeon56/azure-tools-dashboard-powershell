@@ -64,3 +64,4 @@ foreach ($p in $toolPages) {
 Write-Host ""
 if ($script:fail -gt 0) { Write-Host "CONTRACT TESTS: $script:fail FAILED" -ForegroundColor Red; exit 1 }
 Write-Host "CONTRACT TESTS: all passed" -ForegroundColor Green
+exit 0   # always set an explicit exit code so a caller's $LASTEXITCODE is defined (StrictMode-safe in a fresh session)
