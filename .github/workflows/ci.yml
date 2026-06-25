@@ -26,7 +26,7 @@ jobs:
     name: PowerShell lint & security
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Installed fresh and version-pinned each run (no module cache): a security/lint tool
       # should be reproducible and immune to cache poisoning from PR-populated caches.
@@ -44,7 +44,7 @@ jobs:
     name: Contract tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Run contract checks (no Azure required)
         shell: pwsh
         run: ./tests/Run-Tests.ps1 -SkipServer
@@ -53,7 +53,7 @@ jobs:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0   # full history so gitleaks scans every commit in the PR/push
       - name: Gitleaks
