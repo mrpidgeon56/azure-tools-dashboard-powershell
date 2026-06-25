@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+#Requires -Modules Az.Accounts, Az.Resources, Az.ResourceGraph, Az.ManagementGroups
 <#
 .SYNOPSIS
     Scans management groups, subscriptions, and resource groups for STANDING (active)
@@ -24,10 +26,14 @@
 #>
 [CmdletBinding()]
 param(
-    [string]   $OutputPath   = "$PSScriptRoot/pa-scan-results.json",
+    [string]   $OutputPath   = "$PSScriptRoot/../data/pa-scan-results.json",
     [string]   $ProgressPath  = "",                # if set, incremental progress JSON is written here
     [string[]] $ExcludeSubscriptions = @(),        # subscription IDs to skip
     [string]   $SingleSubscriptionId = "",         # if set, only scan this one subscription (skips MGs)
+    [ValidateSet('All','ManagementGroup','Subscription','ResourceGroup')]
+    [string]   $ScopeType         = "All",          # scope selector from the dashboard
+    [string]   $ManagementGroupId = "",             # if set (with ScopeType=ManagementGroup), scan this MG + its descendant subscriptions
+    [string]   $ResourceGroup     = "",             # if set (with ScopeType=ResourceGroup), restrict to this RG within the subscription
     [string[]] $PrivilegedRoles = @('Owner','Contributor','User Access Administrator','Role Based Access Control Administrator'),
     [bool]     $IncludeManagementGroups = $true,   # scan MG-scope assignments (ignored in single-sub mode)
     [int]      $ThrottleLimit = 8                   # max resource groups scanned concurrently (1 = sequential)
@@ -171,40 +177,91 @@ if ($ThrottleLimit -gt 1) {
     $null = Enable-AzContextAutosave -Scope Process -ErrorAction SilentlyContinue
 }
 
+# ── Scope resolution ────────────────────────────────────────────────────────────
+# Backward-compatible: ScopeType defaults to 'All'. A lone -SingleSubscriptionId
+# (ScopeType unset) still restricts to that one subscription, as the standalone CLI
+# relies on. Precedence:
+#   ManagementGroup (+ $ManagementGroupId) → scan that MG scope + its descendant subscriptions.
+#   else SingleSubscriptionId set          → restrict to that subscription (+ optional $ResourceGroup).
+#   else                                   → all accessible subscriptions (+ all MGs).
+$useMgScope = ($ScopeType -eq 'ManagementGroup' -and $ManagementGroupId)
+# A resource-group restriction is only meaningful within a single subscription.
+$rgFilter   = if (($ScopeType -eq 'ResourceGroup') -and $ResourceGroup) { $ResourceGroup } else { "" }
+
 Write-ScanProgress -Phase "init" -Message "Fetching subscriptions..."
 Write-Progress2 "Fetching subscriptions..."
-$subscriptions = Get-AzSubscription | Where-Object {
+$allSubs = @(Get-AzSubscription | Where-Object {
     $_.State -eq "Enabled" -and $_.Id -notin $ExcludeSubscriptions
-}
-if ($SingleSubscriptionId) {
-    $subscriptions = @($subscriptions | Where-Object { $_.Id -eq $SingleSubscriptionId })
+})
+
+if ($useMgScope) {
+    # Management-group scope: scan the MG itself, then only its descendant subscriptions.
+    $IncludeManagementGroups = $false   # handled explicitly below
+    $descendantSubIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    try {
+        # Resolve descendant subscriptions via a paged Resource Graph query rather than
+        # walking the (throttle-prone) -Expand -Recurse management-group tree. Search-AzGraph
+        # caps a single page at 1000 rows regardless of -First, so -First 1000 alone would
+        # silently truncate large tenants — loop on the SkipToken until it's exhausted.
+        $descQuery = "ResourceContainers | where type == 'microsoft.resources/subscriptions' | project subscriptionId"
+        $skip = $null
+        do {
+            $page = if ($skip) { Search-AzGraph -Query $descQuery -First 1000 -SkipToken $skip -ManagementGroup $ManagementGroupId }
+                    else        { Search-AzGraph -Query $descQuery -First 1000 -ManagementGroup $ManagementGroupId }
+            foreach ($row in @($page)) {
+                if ($row.PSObject.Properties['subscriptionId'] -and $row.subscriptionId) {
+                    [void]$descendantSubIds.Add($row.subscriptionId)
+                }
+            }
+            $skip = $page.PSObject.Properties['SkipToken'] ? $page.SkipToken : $null
+        } while ($skip)
+    } catch {
+        $errors.Add(@{ Scope = $ManagementGroupId; ScopeLevel = "ManagementGroup"; Error = (Format-Exception $_) })
+        Write-Progress2 "Could not expand management group '$ManagementGroupId' ($(Format-Exception $_))."
+    }
+    $subscriptions = @($allSubs | Where-Object { $descendantSubIds.Contains($_.Id) })
+    Write-Progress2 "Management-group scope: $ManagementGroupId — $($subscriptions.Count) descendant subscription(s)."
+} elseif ($SingleSubscriptionId) {
+    $subscriptions = @($allSubs | Where-Object { $_.Id -eq $SingleSubscriptionId })
     if (-not $subscriptions) { throw "No enabled subscription found with ID '$SingleSubscriptionId'." }
     $IncludeManagementGroups = $false   # single-sub mode is intentionally narrow
-    Write-Progress2 "Single-subscription mode: $($subscriptions[0].Name) ($SingleSubscriptionId)"
+    Write-Progress2 "Single-subscription mode: $($subscriptions[0].Name) ($SingleSubscriptionId)$(if ($rgFilter) { " | resource group: $rgFilter" })"
 } else {
+    $subscriptions = $allSubs
     Write-Progress2 "Found $($subscriptions.Count) enabled subscription(s)."
 }
 
-# ── Management-group scope (full-tenant scans only) ─────────────────────────────
-if ($IncludeManagementGroups) {
+# ── Management-group scope assignments ──────────────────────────────────────────
+# 'All' scans every MG; ManagementGroup scope scans only the chosen MG.
+$mgsToScan = @()
+if ($useMgScope) {
     try {
-        $mgs = @(Get-AzManagementGroup -ErrorAction Stop)
-        Write-Progress2 "Scanning $($mgs.Count) management group(s) for direct privileged assignments..."
-        foreach ($mg in $mgs) {
-            try {
-                $mgScope = "/providers/Microsoft.Management/managementGroups/$($mg.Name)"
-                $recs = Get-PrivilegedAssignmentsAtScope -Scope $mgScope -ScopeLevel "ManagementGroup" `
-                            -ScopeName $mg.DisplayName -SubscriptionId ("mg:" + $mg.Name) `
-                            -SubscriptionName ("MG · " + $mg.DisplayName) -ResourceGroupName "" `
-                            -PrivilegedRoles $PrivilegedRoles
-                foreach ($r in $recs) { $assignments.Add($r); $countSoFar++ }
-            } catch {
-                $errors.Add(@{ Scope = $mg.Name; ScopeLevel = "ManagementGroup"; Error = (Format-Exception $_) })
-            }
-        }
+        $mg = Get-AzManagementGroup -GroupName $ManagementGroupId -ErrorAction Stop
+        $mgsToScan = @($mg)
+    } catch {
+        $errors.Add(@{ Scope = $ManagementGroupId; ScopeLevel = "ManagementGroup"; Error = (Format-Exception $_) })
+    }
+} elseif ($IncludeManagementGroups) {
+    try {
+        $mgsToScan = @(Get-AzManagementGroup -ErrorAction Stop)
     } catch {
         Write-Progress2 "Management groups unavailable ($(Format-Exception $_)); continuing with subscriptions."
         $errors.Add(@{ Scope = "(management groups)"; ScopeLevel = "ManagementGroup"; Error = (Format-Exception $_) })
+    }
+}
+if ($mgsToScan.Count) {
+    Write-Progress2 "Scanning $($mgsToScan.Count) management group(s) for direct privileged assignments..."
+    foreach ($mg in $mgsToScan) {
+        try {
+            $mgScope = "/providers/Microsoft.Management/managementGroups/$($mg.Name)"
+            $recs = Get-PrivilegedAssignmentsAtScope -Scope $mgScope -ScopeLevel "ManagementGroup" `
+                        -ScopeName $mg.DisplayName -SubscriptionId ("mg:" + $mg.Name) `
+                        -SubscriptionName ("MG · " + $mg.DisplayName) -ResourceGroupName "" `
+                        -PrivilegedRoles $PrivilegedRoles
+            foreach ($r in $recs) { $assignments.Add($r); $countSoFar++ }
+        } catch {
+            $errors.Add(@{ Scope = $mg.Name; ScopeLevel = "ManagementGroup"; Error = (Format-Exception $_) })
+        }
     }
 }
 
@@ -235,18 +292,26 @@ foreach ($sub in $subscriptions) {
     try {
         $null = Set-AzContext -SubscriptionId $sub.Id -WarningAction SilentlyContinue
 
-        # Subscription-scope assignments (done once in the main runspace).
-        try {
-            $subScope = "/subscriptions/$($sub.Id)"
-            $recs = Get-PrivilegedAssignmentsAtScope -Scope $subScope -ScopeLevel "Subscription" `
-                        -ScopeName $sub.Name -SubscriptionId $sub.Id -SubscriptionName $sub.Name `
-                        -ResourceGroupName "" -PrivilegedRoles $PrivilegedRoles
-            foreach ($r in $recs) { $assignments.Add($r); $countSoFar++ }
-        } catch {
-            $errors.Add(@{ Scope = $sub.Id; ScopeLevel = "Subscription"; Error = (Format-Exception $_) })
+        # Subscription-scope assignments (done once in the main runspace). Skipped when
+        # scoping to a single resource group — the caller asked only for that RG.
+        if (-not $rgFilter) {
+            try {
+                $subScope = "/subscriptions/$($sub.Id)"
+                $recs = Get-PrivilegedAssignmentsAtScope -Scope $subScope -ScopeLevel "Subscription" `
+                            -ScopeName $sub.Name -SubscriptionId $sub.Id -SubscriptionName $sub.Name `
+                            -ResourceGroupName "" -PrivilegedRoles $PrivilegedRoles
+                foreach ($r in $recs) { $assignments.Add($r); $countSoFar++ }
+            } catch {
+                $errors.Add(@{ Scope = $sub.Id; ScopeLevel = "Subscription"; Error = (Format-Exception $_) })
+            }
         }
 
-        $resourceGroups = @(Get-AzResourceGroup)
+        # Resource groups — constrained to a single RG when one was requested (case-insensitive).
+        $resourceGroups = if ($rgFilter) {
+            @(Get-AzResourceGroup | Where-Object { $_.ResourceGroupName -ieq $rgFilter })
+        } else {
+            @(Get-AzResourceGroup)
+        }
         $total          = $resourceGroups.Count
         $scopeCompleted = 0
         $useParallel    = ($ThrottleLimit -gt 1 -and $total -gt 1)
@@ -319,6 +384,9 @@ $output = @{
         SubscriptionsScanned  = $subscriptions.Count
         PrivilegedRoles       = @($PrivilegedRoles)
         IncludedManagementGroups = [bool]$IncludeManagementGroups
+        ScopeType             = $ScopeType
+        ManagementGroupId     = $ManagementGroupId
+        ResourceGroup         = $ResourceGroup
         TotalAssignments      = $assignments.Count
         DistinctPrincipals    = $distinctPrincipals
         UserAssignments       = $userCount

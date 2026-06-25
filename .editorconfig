@@ -1,0 +1,20 @@
+# EditorConfig — consistent formatting across the hub. https://editorconfig.org
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+# PowerShell scanners + server
+[*.ps1]
+indent_size = 4
+
+# Single-file HTML dashboards (HTML/CSS/JS)
+[*.{html,css,js}]
+indent_size = 2
+
+[*.{json,md}]
+indent_size = 2

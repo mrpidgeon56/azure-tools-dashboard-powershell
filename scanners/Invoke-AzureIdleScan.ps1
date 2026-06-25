@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+#Requires -Modules Az.Accounts, Az.Resources, Az.Monitor, Az.CostManagement, Az.ResourceGraph
 <#
 .SYNOPSIS
     Scans all subscriptions in an Azure tenant and flags resource groups with no activity
@@ -16,11 +18,15 @@
 [CmdletBinding()]
 param(
     [int]    $LookbackDays  = 14,
-    [string] $OutputPath    = "$PSScriptRoot/scan-results.json",
+    [string] $OutputPath    = "$PSScriptRoot/../data/scan-results.json",
     [string] $ProgressPath  = "",                # if set, incremental progress JSON is written here
     [string] $OwnerTagName  = "Owner",          # tag key used in your tenant for ownership
     [string] $TeamTagName   = "Team",
     [string[]] $ExcludeSubscriptions = @(),     # subscription IDs to skip
+    [ValidateSet('All','ManagementGroup','Subscription','ResourceGroup')]
+    [string]   $ScopeType         = "All",       # scan scope target (see scope resolution below)
+    [string]   $ManagementGroupId = "",          # if set (with ScopeType=ManagementGroup), scan all subscriptions under this MG
+    [string]   $ResourceGroup     = "",          # if set, restrict the scan to just this resource group in the chosen subscription
     [string]   $SingleSubscriptionId = "",      # if set, only scan this one subscription (useful for testing)
     [switch] $SkipCostData,                     # omit if Cost Management perms unavailable
     [switch] $SkipMetrics,                      # omit if metric queries are too slow
@@ -134,7 +140,7 @@ function Get-SubscriptionResourceMap {
             foreach ($row in @($page)) {
                 $rg = [string](Get-Prop $row 'resourceGroup')
                 if (-not $rg) { continue }
-                $key = $rg.ToLower()
+                $key = $rg.ToLowerInvariant()
                 if (-not $map.ContainsKey($key)) { $map[$key] = [System.Collections.Generic.List[object]]::new() }
                 $map[$key].Add((Convert-GraphResource $row))
             }
@@ -404,7 +410,7 @@ function Get-SubscriptionCostByRg {
         $body = @{
             type       = "Usage"
             timeframe  = "Custom"
-            timePeriod = @{ from = $PeriodStart.ToString("yyyy-MM-dd"); to = $end.ToString("yyyy-MM-dd") }
+            timePeriod = @{ from = $PeriodStart.ToString("yyyy-MM-dd", [System.Globalization.CultureInfo]::InvariantCulture); to = $end.ToString("yyyy-MM-dd", [System.Globalization.CultureInfo]::InvariantCulture) }
             dataset    = @{
                 granularity = "None"
                 aggregation = @{ totalCost = @{ name = "PreTaxCost"; function = "Sum" } }
@@ -438,7 +444,7 @@ function Get-SubscriptionCostByRg {
             $rgName = [string]$row[$idxRg]
             if (-not $rgName) { continue }                 # subscription-level/unassigned costs
             $raw = [double]$row[$idxCost]
-            $map[$rgName.ToLower()] = @{
+            $map[$rgName.ToLowerInvariant()] = @{
                 EstimatedMonthlyCost = [math]::Round(($raw / $days) * 30.4, 2)
                 Currency             = if ($idxCur -ge 0) { [string]$row[$idxCur] } else { "USD" }
                 ActualCostInPeriod   = [math]::Round($raw, 2)
@@ -904,12 +910,52 @@ Write-Progress2 "Fetching subscriptions..."
 $subscriptions = Get-AzSubscription | Where-Object {
     $_.State -eq "Enabled" -and $_.Id -notin $ExcludeSubscriptions
 }
-if ($SingleSubscriptionId) {
-    $subscriptions = @($subscriptions | Where-Object { $_.Id -eq $SingleSubscriptionId })
-    if (-not $subscriptions) {
-        throw "No enabled subscription found with ID '$SingleSubscriptionId'."
+
+# ── scope resolution ─────────────────────────────────────────────────────────
+# Backward-compatible: ScopeType defaults to 'All', and a lone -SingleSubscriptionId
+# (with ScopeType unset) still scans just that subscription. The dashboard sends an
+# explicit ScopeType; the standalone CLI may omit it.
+#   ManagementGroup → all subscriptions under the MG (resolved via Resource Graph)
+#   Subscription / lone -SingleSubscriptionId → that one subscription
+#   ResourceGroup → that subscription, further restricted to $ResourceGroup (below)
+$effectiveSubId = $SingleSubscriptionId
+if ($ScopeType -eq 'ManagementGroup' -and $ManagementGroupId) {
+    Write-Progress2 "Management-group scope: resolving subscriptions under '$ManagementGroupId'..."
+    $mgSubIds = @()
+    if (Get-Command Search-AzGraph -ErrorAction SilentlyContinue) {
+        try {
+            $mgQuery = "ResourceContainers | where type == 'microsoft.resources/subscriptions' | project subscriptionId"
+            $mgRows  = [System.Collections.Generic.List[object]]::new()
+            $skip    = $null
+            do {
+                $page = if ($skip) { Search-AzGraph -Query $mgQuery -First 1000 -SkipToken $skip -ManagementGroup $ManagementGroupId }
+                        else        { Search-AzGraph -Query $mgQuery -First 1000 -ManagementGroup $ManagementGroupId }
+                foreach ($row in @($page)) { $mgRows.Add($row) }
+                $skip = $page.PSObject.Properties['SkipToken'] ? $page.SkipToken : $null
+            } while ($skip)
+            $mgSubIds = @($mgRows | ForEach-Object { [string](Get-Prop $_ 'subscriptionId') } | Where-Object { $_ })
+        } catch {
+            Write-Warning "Could not resolve management group '$ManagementGroupId' via Resource Graph: $(Format-Exception $_)"
+        }
     }
-    Write-Progress2 "Single-subscription mode: $($subscriptions[0].Name) ($SingleSubscriptionId)"
+    if (-not $mgSubIds.Count) {
+        throw "No subscriptions found under management group '$ManagementGroupId' (check the ID and that Az.ResourceGraph is available)."
+    }
+    $subscriptions = @($subscriptions | Where-Object { $_.Id -in $mgSubIds })
+    if (-not $subscriptions) {
+        throw "No enabled, accessible subscriptions found under management group '$ManagementGroupId'."
+    }
+    Write-Progress2 "Management-group scope: $($subscriptions.Count) subscription(s) under '$ManagementGroupId'."
+} elseif ($effectiveSubId) {
+    $subscriptions = @($subscriptions | Where-Object { $_.Id -eq $effectiveSubId })
+    if (-not $subscriptions) {
+        throw "No enabled subscription found with ID '$effectiveSubId'."
+    }
+    if ($ResourceGroup) {
+        Write-Progress2 "Resource-group scope: $($subscriptions[0].Name) ($effectiveSubId) / $ResourceGroup"
+    } else {
+        Write-Progress2 "Single-subscription mode: $($subscriptions[0].Name) ($effectiveSubId)"
+    }
 } else {
     Write-Progress2 "Found $($subscriptions.Count) enabled subscription(s)."
 }
@@ -948,6 +994,14 @@ foreach ($sub in $subscriptions) {
         $null = Set-AzContext -SubscriptionId $sub.Id -WarningAction SilentlyContinue
 
         $resourceGroups   = @(Get-AzResourceGroup)
+
+        # When a specific resource group is requested, restrict the scan to it (case-insensitive).
+        if ($ResourceGroup) {
+            $resourceGroups = @($resourceGroups | Where-Object { $_.ResourceGroupName -ieq $ResourceGroup })
+            if (-not $resourceGroups) {
+                Write-Warning "Resource group '$ResourceGroup' not found in subscription $($sub.Id)."
+            }
+        }
 
         # ── subscription-level batch fetches (one call each, reused across all RGs) ──
         $subAdvisorScore  = Get-SubscriptionAdvisorScore -SubscriptionId $sub.Id
@@ -1026,6 +1080,9 @@ $output = @{
         ScanTime         = $scanStartTime.ToString("o")
         CompletedTime    = (Get-Date).ToString("o")
         LookbackDays     = $LookbackDays
+        ScopeType         = $ScopeType
+        ManagementGroupId = $ManagementGroupId
+        ResourceGroup     = $ResourceGroup
         SubscriptionsScanned = $subscriptions.Count
         TotalResourceGroups  = $results.Count
         FlaggedCount         = $flaggedCount

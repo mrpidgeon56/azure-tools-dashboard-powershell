@@ -110,13 +110,34 @@
     border: 1px solid var(--border); border-radius: 6px; padding: 7px 11px;
   }
   .toolbar input[type="text"] { min-width: 240px; flex: 1; }
+  .search-wrap { position: relative; flex: 1; min-width: 220px; max-width: 380px; }
+  .toolbar .search-wrap input { width: 100%; flex: none; min-width: 0; padding: 7px 11px 7px 34px; }
+  .search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; font-size: 13px; }
   .toolbar input::placeholder { color: var(--muted); }
   .toolbar .toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
   .toolbar .spacer { flex: 1; }
 
-  .filter-summary { font-size: 12px; color: var(--muted); }
+  .filter-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 2px 0 14px; font-size: 12px; color: var(--muted); min-height: 18px; }
+  .filter-summary .clear-filters { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+  .filter-summary .clear-filters:hover { text-decoration: underline; }
   .col-btn.export-btn { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
   .col-btn.export-btn:hover { background: #3f6fe0; }
+
+  /* ── scanner configuration card (topmost) ─────────────────────── */
+  .scan-config { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 22px; }
+  .scan-config .sc-head { margin-bottom: 14px; }
+  .scan-config .sc-head h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .scan-config .sc-head .hint { font-size: 11px; color: var(--muted); line-height: 1.4; }
+  .scan-config .sc-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+  .scan-config .field { display: flex; flex-direction: column; gap: 6px; }
+  .scan-config .field[hidden] { display: none; }   /* author display:flex would otherwise defeat [hidden] */
+  .scan-config label.lbl { font-size: 12px; color: var(--muted); }
+  .scan-config select, .scan-config input[type="number"] {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 9px; font-size: 13px; font-family: var(--font); cursor: pointer; min-width: 200px;
+  }
+  .scan-config .sc-run { margin-left: auto; }
+  .scan-config .sc-run button { padding: 8px 16px; }
 
   /* ── tag rules panel (inline, full-width) ─────────────────────── */
   .tag-rules { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 20px; }
@@ -266,12 +287,45 @@
   </div>
   <div class="header-actions">
     <button id="refreshBtn" class="ghost" onclick="loadResults(true)" title="Reload last scan">↻</button>
-    <button id="scanBtn" class="primary" onclick="startScan()">Run Scan</button>
     <button id="cancelBtn" class="ghost" onclick="cancelScan()" style="display:none;">Cancel</button>
   </div>
 </header>
 
 <main>
+  <!-- scanner configuration (topmost, always visible) -->
+  <section class="scan-config">
+    <div class="sc-head">
+      <h3>⚙ Scanner configuration</h3>
+      <div class="hint">Audit tags across the chosen scope. Required-tag rules are set below.</div>
+    </div>
+    <div class="sc-row">
+      <div class="field">
+        <label class="lbl" for="scopeType">Target</label>
+        <select id="scopeType" onchange="onScopeTypeChange()">
+          <option value="All">Whole tenant (all subscriptions)</option>
+          <option value="ManagementGroup">Management group</option>
+          <option value="Subscription">Subscription</option>
+          <option value="ResourceGroup">Resource group</option>
+        </select>
+      </div>
+      <div class="field scope-target" id="scopeMgField" hidden>
+        <label class="lbl" for="scopeMg">Management group</label>
+        <select id="scopeMg" onmousedown="loadManagementGroups()"><option value="">Loading…</option></select>
+      </div>
+      <div class="field scope-target" id="scopeSubField" hidden>
+        <label class="lbl" for="scopeSub">Subscription</label>
+        <select id="scopeSub" onchange="onScopeSubChange()"><option value="">Loading…</option></select>
+      </div>
+      <div class="field scope-target" id="scopeRgField" hidden>
+        <label class="lbl" for="scopeRg">Resource group</label>
+        <select id="scopeRg" disabled><option value="">Select a subscription first</option></select>
+      </div>
+      <div class="sc-run">
+        <button class="primary" id="scanBtn" onclick="startScan()">▶ Run Scan</button>
+      </div>
+    </div>
+  </section>
+
   <!-- empty state -->
   <div class="empty">
     <div class="big">🏷️</div>
@@ -322,13 +376,6 @@
     </div>
     <div class="tr-opts">
       <div class="field">
-        <label class="lbl">Management group</label>
-        <select id="managementGroupId" onmousedown="loadManagementGroups()" onchange="saveRules()">
-          <option value="">Whole tenant (all subscriptions)</option>
-        </select>
-        <div class="hint">Leave on “Whole tenant” to scan every accessible subscription, or pick a management group to recurse just its hierarchy (all child groups + subscriptions). The list loads from your tenant when you open it.</div>
-      </div>
-      <div class="field">
         <label class="lbl">Result mode</label>
         <select id="resultMode" onchange="onModeChange()">
           <option value="exclusive">Exclusive — objects in violation (missing the tags)</option>
@@ -349,12 +396,18 @@
 
     <!-- toolbar -->
     <div class="toolbar">
-      <input type="text" id="search" placeholder="Search name, id, type, subscription…" oninput="onFilterChange()" />
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search" placeholder="Search name, id, type, subscription…" oninput="onSearchInput()" />
+      </div>
       <label class="toggle"><input type="checkbox" id="nonCompliantOnly" onchange="onFilterChange()"> <span id="focusToggleLabel">In violation only</span></label>
-      <span class="spacer"></span>
-      <span class="filter-summary" id="filterSummary"></span>
-      <button class="ghost" id="clearBtn" onclick="clearFilters()" style="display:none;">Clear</button>
       <button class="col-btn export-btn" onclick="exportCsv()" id="exportBtn">⬇ Export CSV</button>
+    </div>
+
+    <!-- Active-filter summary + clear (own line, below toolbar) -->
+    <div class="filter-summary">
+      <span id="filterSummary"></span>
+      <button class="ghost clear-filters" id="clearBtn" onclick="clearFilters()" style="display:none;">Clear</button>
     </div>
 
     <!-- table -->
@@ -423,6 +476,22 @@ function applyModeLabels() {
 let detailRows = [], detailIndex = -1;
 let pollTimer = null;
 
+/* Memoization for getFilteredRows(): the filtered+sorted set is recomputed only when an
+   input-changing handler calls invalidateFilterCache(). Every such handler must invalidate. */
+let _filteredCache = null;
+function invalidateFilterCache() { _filteredCache = null; }
+
+/* Debounced search: coalesce keystrokes so getFilteredRows() runs once typing settles. */
+let _searchTimer = null;
+function onSearchInput() {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => {
+    invalidateFilterCache();
+    currentPage = 1;
+    renderTable();
+  }, 150);
+}
+
 const COLS = [
   { key: 'Name',              label: 'Name' },
   { key: 'ScopeType',         label: 'Scope' },
@@ -456,7 +525,7 @@ const COL_FILTERS = {
   },
   violationType: {
     options: VIOLATION_TYPES,
-    match: (r, vals) => vals.some(v => asArray(r.Violations).some(x => x && x.Type === v)),
+    match: (r, vals) => vals.some(v => r.Violations.some(x => x && x.Type === v)),
   },
   status: {
     options: [['Compliant', '✓ Compliant'], ['Non-compliant', '⚠ Non-compliant'], ['Untaggable', 'Untaggable']],
@@ -470,6 +539,7 @@ function toggleColValue(key, value, checked) {
   const set = new Set(colFilters[key] || []);
   if (checked) set.add(value); else set.delete(value);
   if (set.size) colFilters[key] = [...set]; else delete colFilters[key];
+  invalidateFilterCache();
   currentPage = 1;
   setupColFilterIcons();
   renderTable();
@@ -477,6 +547,7 @@ function toggleColValue(key, value, checked) {
 
 function clearColFilter(key) {
   delete colFilters[key];
+  invalidateFilterCache();
   currentPage = 1;
   closeColFilter();
   renderTable();
@@ -564,7 +635,50 @@ function tagEntries(tags) {
 
 /* ── init ───────────────────────────────────────────────────── */
 loadRules();
+loadSubscriptions();
+onScopeTypeChange();
 loadResults(false);
+
+/* ── scanner configuration (scope targeting) ─────────────────── */
+/* Show only the target picker(s) that match the chosen scope type. */
+function onScopeTypeChange() {
+  const t = document.getElementById('scopeType').value;
+  document.getElementById('scopeMgField').hidden  = (t !== 'ManagementGroup');
+  document.getElementById('scopeSubField').hidden = (t !== 'Subscription' && t !== 'ResourceGroup');
+  document.getElementById('scopeRgField').hidden  = (t !== 'ResourceGroup');
+}
+
+/* Populate the subscription picker from the tenant (once). */
+let subsLoaded = false;
+async function loadSubscriptions() {
+  if (subsLoaded) return;
+  try {
+    const r = await fetch('/api/subscriptions');
+    if (!r.ok) return;
+    const subs = asArray((await r.json()).subscriptions);
+    const sel = document.getElementById('scopeSub');
+    sel.innerHTML = '<option value="">Select a subscription…</option>' +
+      subs.map(s => `<option value="${esc(s.Id)}">${esc(s.Name)}</option>`).join('');
+    subsLoaded = true;
+  } catch { /* server not running (static preview) — leave placeholder */ }
+}
+
+/* Populate the resource-group picker for the chosen subscription. */
+async function onScopeSubChange() {
+  const subId = document.getElementById('scopeSub').value;
+  const rgSel = document.getElementById('scopeRg');
+  if (!subId) { rgSel.disabled = true; rgSel.innerHTML = '<option value="">Select a subscription first</option>'; return; }
+  rgSel.disabled = true; rgSel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const r = await fetch('/api/resourcegroups?subscriptionId=' + encodeURIComponent(subId));
+    if (r.ok) {
+      const rgs = asArray((await r.json()).resourceGroups);
+      rgSel.innerHTML = '<option value="">Select a resource group…</option>' +
+        rgs.map(g => `<option value="${esc(g.Name)}">${esc(g.Name)}</option>`).join('');
+      rgSel.disabled = false;
+    }
+  } catch { /* leave placeholder */ }
+}
 
 /* ── tag rules ──────────────────────────────────────────────── */
 /* Persist/restore the rules inputs so the page remembers them between visits. */
@@ -575,7 +689,6 @@ function loadRules() {
     const r = JSON.parse(raw);
     if (r.requiredTags) document.getElementById('requiredTags').value = r.requiredTags;
     if (r.allowedValues) document.getElementById('allowedValues').value = r.allowedValues;
-    if (r.managementGroupId) selectManagementGroup(r.managementGroupId);
     if (r.resultMode === 'inclusive' || r.resultMode === 'exclusive') {
       resultMode = r.resultMode;
       document.getElementById('resultMode').value = r.resultMode;
@@ -588,41 +701,27 @@ function saveRules() {
     localStorage.setItem('tagCompliance.rules', JSON.stringify({
       requiredTags: document.getElementById('requiredTags').value,
       allowedValues: document.getElementById('allowedValues').value,
-      managementGroupId: document.getElementById('managementGroupId').value,
       resultMode: resultMode,
     }));
   } catch {}
 }
 
-/* Select a management group by id, adding a placeholder option if the live list
-   hasn't loaded yet (so a restored/persisted choice still shows). */
-function selectManagementGroup(id) {
-  const sel = document.getElementById('managementGroupId');
-  if (!id) { sel.value = ''; return; }
-  if (![...sel.options].some(o => o.value === id)) {
-    sel.insertAdjacentHTML('beforeend', `<option value="${esc(id)}">${esc(id)}</option>`);
-  }
-  sel.value = id;
-}
-
-/* Populate the management-group dropdown from the tenant, once, when first opened.
-   No-op (whole-tenant only) when the API is unreachable (e.g. static preview). */
+/* Populate the management-group picker lazily, on first open.
+   No-op when the API is unreachable (e.g. static preview). */
 let mgLoaded = false, mgLoading = false;
 async function loadManagementGroups() {
   if (mgLoaded || mgLoading) return;
   mgLoading = true;
   try {
-    const r = await fetch('/api/tags/managementgroups');
+    const r = await fetch('/api/managementgroups');
     if (r.ok) {
       const list = asArray((await r.json()).managementGroups);
-      const sel = document.getElementById('managementGroupId');
-      const current = sel.value;
-      sel.innerHTML = '<option value="">Whole tenant (all subscriptions)</option>' +
+      const sel = document.getElementById('scopeMg');
+      sel.innerHTML = (list.length ? '<option value="">Select a management group…</option>' : '<option value="">No management groups found</option>') +
         list.map(m => `<option value="${esc(m.Name)}">${esc(m.DisplayName || m.Name)}</option>`).join('');
-      selectManagementGroup(current);
       mgLoaded = true;
     }
-  } catch { /* leave whole-tenant default */ }
+  } catch { /* leave placeholder */ }
   mgLoading = false;
 }
 
@@ -632,6 +731,7 @@ function onModeChange() {
   saveRules();
   applyModeLabels();
   if (!document.body.classList.contains('needs-data')) {
+    invalidateFilterCache();
     currentPage = 1;
     buildHeatmap();
     renderTable();
@@ -670,8 +770,19 @@ async function startScan() {
     allowedValues: parseAllowedValues(),
     mode: resultMode === 'inclusive' ? 'Inclusive' : 'Exclusive',
   };
-  const mg = document.getElementById('managementGroupId').value.trim();
-  if (mg) body.managementGroupId = mg;
+  const t = document.getElementById('scopeType').value;
+  body.scopeType = t;
+  if (t === 'ManagementGroup') {
+    body.managementGroupId = document.getElementById('scopeMg').value;
+    if (!body.managementGroupId) { alert('Pick a management group, or change Target.'); return; }
+  } else if (t === 'Subscription') {
+    body.singleSubscriptionId = document.getElementById('scopeSub').value;
+    if (!body.singleSubscriptionId) { alert('Pick a subscription, or change Target.'); return; }
+  } else if (t === 'ResourceGroup') {
+    body.singleSubscriptionId = document.getElementById('scopeSub').value;
+    body.resourceGroup = document.getElementById('scopeRg').value;
+    if (!body.singleSubscriptionId || !body.resourceGroup) { alert('Pick a subscription and resource group, or change Target.'); return; }
+  }
   try {
     const r = await fetch('/api/tags/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (r.status === 409) { alert('A scan is already running.'); return; }
@@ -681,7 +792,7 @@ async function startScan() {
 }
 
 async function cancelScan() {
-  try { await fetch('/api/tags/scan/cancel', { method: 'POST' }); } catch {}
+  try { await fetch('/api/tags/scan/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch {}
 }
 
 function setScanning(on) {
@@ -735,11 +846,24 @@ async function loadResults(userInitiated) {
 function applyData(json) {
   meta = json.ScanMetadata || null;
   allData = asArray(json.Objects);
+  invalidateFilterCache();
   if (!meta || !allData.length) {
     document.body.classList.add('needs-data');
     return;
   }
   document.body.classList.remove('needs-data');
+
+  // Pre-normalize per-row array fields once (ConvertTo-Json may collapse single-element
+  // arrays to scalars) and precompute a lowercase search haystack, so getFilteredRows()
+  // and violationSummary() don't call asArray() per row on every interaction.
+  allData.forEach(r => {
+    r.MissingKeys      = asArray(r.MissingKeys);
+    r.EmptyValueKeys   = asArray(r.EmptyValueKeys);
+    r.InvalidValueKeys = asArray(r.InvalidValueKeys);
+    r.CaseDriftKeys    = asArray(r.CaseDriftKeys);
+    r.Violations       = asArray(r.Violations);
+    r._hay = [r.Name, r.Id, r.ResourceType, r.SubscriptionName, r.ResourceGroup].join(' ').toLowerCase();
+  });
 
   // restore the rules that were actually scanned, if present
   if (meta.RequiredTags && asArray(meta.RequiredTags).length) {
@@ -749,7 +873,6 @@ function applyData(json) {
     resultMode = String(meta.Mode).toLowerCase() === 'inclusive' ? 'inclusive' : 'exclusive';
     document.getElementById('resultMode').value = resultMode;
   }
-  if (meta.ManagementGroupId) selectManagementGroup(meta.ManagementGroupId);
   applyModeLabels();
 
   setupColFilterIcons();
@@ -811,6 +934,7 @@ function buildHeatmap() {
 
 function toggleHeat(scope) {
   heatFilter = (heatFilter && heatFilter.scope === scope) ? null : { scope };
+  invalidateFilterCache();
   currentPage = 1;
   buildHeatmap();
   renderTable();
@@ -818,6 +942,7 @@ function toggleHeat(scope) {
 
 /* ── filtering ──────────────────────────────────────────────── */
 function getFilteredRows() {
+  if (_filteredCache) return _filteredCache;
   const q = document.getElementById('search').value.trim().toLowerCase();
   const focusOnly = document.getElementById('nonCompliantOnly').checked;
   const focus = focusState();
@@ -830,10 +955,7 @@ function getFilteredRows() {
       const f = COL_FILTERS[key];
       if (f.match ? !f.match(r, vals) : !vals.includes(f.accessor(r))) return false;
     }
-    if (q) {
-      const hay = [r.Name, r.Id, r.ResourceType, r.SubscriptionName, r.ResourceGroup].join(' ').toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
+    if (q && !r._hay.includes(q)) return false;
     return true;
   });
 
@@ -844,10 +966,11 @@ function getFilteredRows() {
     bv = (bv ?? '').toString().toLowerCase();
     return av < bv ? -sortDir : av > bv ? sortDir : 0;
   });
+  _filteredCache = rows;
   return rows;
 }
 
-function onFilterChange() { currentPage = 1; renderTable(); }
+function onFilterChange() { invalidateFilterCache(); currentPage = 1; renderTable(); }
 
 function filtersActive() {
   return document.getElementById('search').value ||
@@ -860,6 +983,7 @@ function clearFilters() {
   document.getElementById('nonCompliantOnly').checked = false;
   colFilters = {};
   heatFilter = null;
+  invalidateFilterCache();
   currentPage = 1;
   closeColFilter();
   setupColFilterIcons();
@@ -869,6 +993,7 @@ function clearFilters() {
 
 function sortBy(key) {
   if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; }
+  invalidateFilterCache();
   updateSortIndicators();
   renderTable();
 }
@@ -890,10 +1015,10 @@ function computePageSize() {
 }
 
 function violationSummary(r) {
-  const m = asArray(r.MissingKeys).length;
-  const e = asArray(r.EmptyValueKeys).length;
-  const iv = asArray(r.InvalidValueKeys).length;
-  const d = asArray(r.CaseDriftKeys).length;
+  const m = r.MissingKeys.length;
+  const e = r.EmptyValueKeys.length;
+  const iv = r.InvalidValueKeys.length;
+  const d = r.CaseDriftKeys.length;
   const tags = [];
   if (m)  tags.push(`<span class="viol-tag">${m} missing</span>`);
   if (e)  tags.push(`<span class="viol-tag">${e} empty</span>`);
@@ -975,8 +1100,7 @@ function pageList(cur, total) {
 }
 
 function goToPage(p) {
-  const total = Math.max(1, Math.ceil(getFilteredRows().length / pageSize));
-  currentPage = Math.min(Math.max(1, p), total);
+  currentPage = Math.max(1, p);   // upper bound clamped inside renderTable()
   renderTable();
 }
 

@@ -49,18 +49,6 @@
   h1 .crumb-sep { color: var(--muted); margin: 0 2px; }
   .header-meta { font-size: 12px; color: var(--muted); }
   .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .scan-scope {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 10px 6px 12px;
-    background: var(--surface2); border: 1px solid var(--border);
-    border-radius: var(--radius); font-size: 12px;
-  }
-  .scan-scope label { color: var(--muted); white-space: nowrap; cursor: pointer; }
-  .scan-scope select {
-    padding: 2px 6px; font-size: 12px; max-width: 220px;
-    border-color: var(--accent);
-  }
-  .scan-scope select:disabled { opacity: .4; cursor: not-allowed; border-color: var(--border); }
 
   main { padding: 24px 28px; }
 
@@ -151,6 +139,22 @@
   .card.cost    .card-value { color: var(--cost); }
   /* Savings card — keeps the green value text, no highlighted background. */
   .card.savings .card-value { color: var(--ok); }
+
+  /* ── Scanner configuration card (topmost) ── */
+  .scan-config { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 22px; }
+  .scan-config .sc-head { margin-bottom: 14px; }
+  .scan-config .sc-head h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .scan-config .sc-head .hint { font-size: 11px; color: var(--muted); line-height: 1.4; }
+  .scan-config .sc-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+  .scan-config .field { display: flex; flex-direction: column; gap: 6px; }
+  .scan-config .field[hidden] { display: none; }   /* author display:flex would otherwise defeat [hidden] */
+  .scan-config label.lbl { font-size: 12px; color: var(--muted); }
+  .scan-config select, .scan-config input[type="number"] {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 9px; font-size: 13px; font-family: var(--font); cursor: pointer; min-width: 200px;
+  }
+  .scan-config .sc-run { margin-left: auto; }
+  .scan-config .sc-run button { padding: 8px 16px; }
 
   /* ── Subscription heatmap (shown only for multi-subscription scans) ── */
   .heatmap-wrap { margin-bottom: 18px; }
@@ -440,22 +444,6 @@
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-  /* ── Scan-settings popover (single-sub + evaluation window live here) ── */
-  .scan-settings { position: relative; }
-  .scan-pop {
-    display: none; position: absolute; right: 0; top: calc(100% + 8px); z-index: 60;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 16px; min-width: 280px;
-    box-shadow: 0 12px 32px rgba(0,0,0,.45);
-  }
-  .scan-pop.open { display: block; }
-  .scan-pop h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 12px; }
-  .scan-pop .field { margin-bottom: 14px; }
-  .scan-pop .field:last-child { margin-bottom: 0; }
-  .scan-pop .field-label { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; }
-  .scan-pop select { width: 100%; }
-  .scan-pop .hint { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
-
   /* ── Filter summary / clear bar ── */
   .filter-summary {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -603,37 +591,6 @@
       <span id="statusDot">●</span>
       <span id="statusText">Idle</span>
     </span>
-    <div class="scan-settings" id="scanSettings">
-      <button type="button" class="btn btn-outline" id="scanSettingsBtn" onclick="toggleScanPop(event)">⚙ Scan settings</button>
-      <div class="scan-pop" id="scanPop">
-        <h4>Next scan parameters</h4>
-        <div class="field">
-          <label class="field-label" for="scopeToggle">
-            <input type="checkbox" id="scopeToggle" onchange="onScopeToggle()" />
-            Limit to a single subscription
-          </label>
-          <select id="scopeSub" disabled>
-            <option value="">— pick after first scan —</option>
-          </select>
-          <div class="hint">Faster — scans only the selected subscription.</div>
-        </div>
-        <div class="field">
-          <label class="field-label" for="lookbackDays">Evaluation window</label>
-          <select id="lookbackDays">
-            <option value="7">7 days</option>
-            <option value="14" selected>14 days</option>
-            <option value="21">21 days</option>
-            <option value="30">30 days</option>
-            <option value="60">60 days</option>
-            <option value="90">90 days</option>
-          </select>
-          <div class="hint">Applies to the next scan — the activity/cost window is queried from Azure, so it can't re-filter results already on screen.</div>
-        </div>
-      </div>
-    </div>
-    <button class="btn btn-primary" id="scanBtn" onclick="startScan()">
-      ▶ Run Scan
-    </button>
     <button class="btn btn-danger" id="cancelBtn" onclick="cancelScan()" style="display:none">
       ✕ Cancel
     </button>
@@ -652,6 +609,51 @@
 </div>
 
 <main>
+  <!-- Scanner configuration (topmost, always visible) -->
+  <section class="scan-config">
+    <div class="sc-head">
+      <h3>⚙ Scanner configuration</h3>
+      <div class="hint">Scan resource groups for idle signals within the chosen scope.</div>
+    </div>
+    <div class="sc-row">
+      <div class="field">
+        <label class="lbl" for="scopeType">Target</label>
+        <select id="scopeType" onchange="onScopeTypeChange()">
+          <option value="All">Whole tenant (all subscriptions)</option>
+          <option value="ManagementGroup">Management group</option>
+          <option value="Subscription">Subscription</option>
+          <option value="ResourceGroup">Resource group</option>
+        </select>
+      </div>
+      <div class="field scope-target" id="scopeMgField" hidden>
+        <label class="lbl" for="scopeMg">Management group</label>
+        <select id="scopeMg" onmousedown="loadManagementGroups()"><option value="">Loading…</option></select>
+      </div>
+      <div class="field scope-target" id="scopeSubField" hidden>
+        <label class="lbl" for="scopeSub">Subscription</label>
+        <select id="scopeSub" onchange="onScopeSubChange()"><option value="">Loading…</option></select>
+      </div>
+      <div class="field scope-target" id="scopeRgField" hidden>
+        <label class="lbl" for="scopeRg">Resource group</label>
+        <select id="scopeRg" disabled><option value="">Select a subscription first</option></select>
+      </div>
+      <div class="field">
+        <label class="lbl" for="lookbackDays">Evaluation window</label>
+        <select id="lookbackDays">
+          <option value="7">7 days</option>
+          <option value="14" selected>14 days</option>
+          <option value="21">21 days</option>
+          <option value="30">30 days</option>
+          <option value="60">60 days</option>
+          <option value="90">90 days</option>
+        </select>
+      </div>
+      <div class="sc-run">
+        <button class="btn btn-primary" id="scanBtn" onclick="startScan()">▶ Run Scan</button>
+      </div>
+    </div>
+  </section>
+
   <!-- Summary cards -->
   <div class="cards" id="cards">
     <div class="card"><div class="card-label">Subscriptions</div><div class="card-value" id="cSubs">—</div></div>
@@ -811,15 +813,9 @@ function toggleColMenu(e) {
   e.stopPropagation();
   document.getElementById('colMenu').classList.toggle('open');
 }
-function toggleScanPop(e) {
-  e.stopPropagation();
-  document.getElementById('scanPop').classList.toggle('open');
-}
 document.addEventListener('click', (e) => {
   const cfg = document.getElementById('colConfig');
   if (cfg && !cfg.contains(e.target)) document.getElementById('colMenu').classList.remove('open');
-  const settings = document.getElementById('scanSettings');
-  if (settings && !settings.contains(e.target)) document.getElementById('scanPop').classList.remove('open');
 });
 
 // ── Per-column header filters ───────────────────────────────────────────────────
@@ -1133,47 +1129,60 @@ function populateSubFilter() {
     if (id === curr) o.selected = true;
     sel.appendChild(o);
   });
-
-  // scan scope dropdown — merge any subs discovered in results
-  if (subs.length) populateScopeDropdown(subs);
 }
 
-// Fills the single-sub scan dropdown. `subs` = array of [id, name].
-function populateScopeDropdown(subs) {
-  const scopeSel = document.getElementById('scopeSub');
-  if (!subs || !subs.length) return;
-  const scopeCurr = scopeSel.value;
-  scopeSel.innerHTML = '';
-  subs.forEach(([id, name]) => {
-    const o = document.createElement('option');
-    o.value = id; o.textContent = name;
-    if (id === scopeCurr) o.selected = true;
-    scopeSel.appendChild(o);
-  });
-  if (!scopeCurr && subs.length) scopeSel.value = subs[0][0];
+// ── Scanner configuration (scope targeting) ──────────────────────────────────
+// Show only the target picker that matches the chosen scope type.
+function onScopeTypeChange() {
+  const t = document.getElementById('scopeType').value;
+  document.getElementById('scopeMgField').hidden  = (t !== 'ManagementGroup');
+  document.getElementById('scopeSubField').hidden = (t !== 'Subscription' && t !== 'ResourceGroup');
+  document.getElementById('scopeRgField').hidden  = (t !== 'ResourceGroup');
 }
 
-// Loads subscriptions up-front (before any scan) so single-sub can be picked.
+// Populate the subscription picker from the tenant (once).
+let subsLoaded = false;
 async function loadSubscriptions() {
+  if (subsLoaded) return;
   try {
-    const r = await fetch('/api/subscriptions');
-    if (!r.ok) return;
-    const data = await r.json();
-    const subs = (data.subscriptions || []).map(s => [s.Id, s.Name]);
-    if (subs.length) {
-      populateScopeDropdown(subs);
-    } else {
-      const scopeSel = document.getElementById('scopeSub');
-      scopeSel.innerHTML = '<option value="">— no subscriptions found —</option>';
-    }
-  } catch {
-    // Server not reachable (e.g. page opened as a static file) — leave placeholder.
-  }
+    const r = await fetch('/api/subscriptions'); if (!r.ok) return;
+    const subs = asArray((await r.json()).subscriptions);
+    const sel = document.getElementById('scopeSub');
+    sel.innerHTML = '<option value="">Select a subscription…</option>' + subs.map(s => `<option value="${esc(s.Id)}">${esc(s.Name)}</option>`).join('');
+    subsLoaded = true;
+  } catch {}
 }
 
-function onScopeToggle() {
-  const on = document.getElementById('scopeToggle').checked;
-  document.getElementById('scopeSub').disabled = !on;
+// Populate the management-group picker lazily, on first open.
+let mgLoaded = false, mgLoading = false;
+async function loadManagementGroups() {
+  if (mgLoaded || mgLoading) return; mgLoading = true;
+  try {
+    const r = await fetch('/api/managementgroups');
+    if (r.ok) {
+      const list = asArray((await r.json()).managementGroups);
+      const sel = document.getElementById('scopeMg');
+      sel.innerHTML = (list.length ? '<option value="">Select a management group…</option>' : '<option value="">No management groups found</option>') + list.map(m => `<option value="${esc(m.Name)}">${esc(m.DisplayName || m.Name)}</option>`).join('');
+      mgLoaded = true;
+    }
+  } catch {}
+  mgLoading = false;
+}
+
+// When the scope subscription changes, load its resource groups (for ResourceGroup scope).
+async function onScopeSubChange() {
+  const subId = document.getElementById('scopeSub').value;
+  const rgSel = document.getElementById('scopeRg');
+  if (!subId) { rgSel.disabled = true; rgSel.innerHTML = '<option value="">Select a subscription first</option>'; return; }
+  rgSel.disabled = true; rgSel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const r = await fetch('/api/resourcegroups?subscriptionId=' + encodeURIComponent(subId));
+    if (r.ok) {
+      const rgs = asArray((await r.json()).resourceGroups);
+      rgSel.innerHTML = '<option value="">Select a resource group…</option>' + rgs.map(g => `<option value="${esc(g.Name)}">${esc(g.Name)}</option>`).join('');
+      rgSel.disabled = false;
+    }
+  } catch {}
 }
 
 function getLookbackDays() {
@@ -1797,12 +1806,21 @@ document.addEventListener('keydown', (e) => {
 
 async function startScan() {
   try {
-    document.getElementById('scanPop')?.classList.remove('open');
-    const scopeOn    = document.getElementById('scopeToggle').checked;
-    const scopeSub   = document.getElementById('scopeSub').value;
     const lookback   = getLookbackDays();
     const bodyObj    = { lookbackDays: lookback };
-    if (scopeOn && scopeSub) bodyObj.singleSubscriptionId = scopeSub;
+    const t = document.getElementById('scopeType').value;
+    bodyObj.scopeType = t;
+    if (t === 'ManagementGroup') {
+      bodyObj.managementGroupId = document.getElementById('scopeMg').value;
+      if (!bodyObj.managementGroupId) { alert('Pick a management group, or change Target.'); return; }
+    } else if (t === 'Subscription') {
+      bodyObj.singleSubscriptionId = document.getElementById('scopeSub').value;
+      if (!bodyObj.singleSubscriptionId) { alert('Pick a subscription, or change Target.'); return; }
+    } else if (t === 'ResourceGroup') {
+      bodyObj.singleSubscriptionId = document.getElementById('scopeSub').value;
+      bodyObj.resourceGroup = document.getElementById('scopeRg').value;
+      if (!bodyObj.singleSubscriptionId || !bodyObj.resourceGroup) { alert('Pick a subscription and resource group, or change Target.'); return; }
+    }
     const body = JSON.stringify(bodyObj);
     const r = await fetch('/api/scan', {
       method: 'POST',
@@ -1824,7 +1842,7 @@ async function cancelScan() {
   const cancelBtn = document.getElementById('cancelBtn');
   if (cancelBtn) cancelBtn.disabled = true;
   try {
-    const r = await fetch('/api/scan/cancel', { method: 'POST' });
+    const r = await fetch('/api/scan/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     if (!r.ok && r.status !== 409) { showToast('Failed to cancel scan.'); if (cancelBtn) cancelBtn.disabled = false; return; }
     clearTimeout(pollTimer);   // stop polling the now-dead job
     scanStartMs = null;
@@ -1846,7 +1864,7 @@ function pollStatus() {
       if (s.State === 'running') {
         setStatus('running');
         renderProgress(s.Progress);
-        pollStatus();
+        pollTimer = setTimeout(pollStatus, 1200);
       } else if (s.State === 'completed') {
         renderProgress({ Phase: 'done', Percent: 100, Message: 'Scan complete.' });
         setStatus('done');
@@ -1854,7 +1872,9 @@ function pollStatus() {
         // Learn the average per-RG scan time so the next run can show an ETA early.
         if (scanStartMs && allData.length > 0) {
           const avgMs = (Date.now() - scanStartMs) / allData.length;
-          if (avgMs > 0 && isFinite(avgMs)) localStorage.setItem('avgRgScanMs', String(Math.round(avgMs)));
+          if (avgMs > 0 && isFinite(avgMs)) {
+            try { localStorage.setItem('avgRgScanMs', String(Math.round(avgMs))); } catch {}
+          }
         }
         scanStartMs = null;
         showToast('Scan complete.');
@@ -1868,7 +1888,7 @@ function pollStatus() {
         setStatus('cancelled');
         hideProgress();
       }
-    } catch { pollStatus(); }
+    } catch { pollTimer = setTimeout(pollStatus, 1200); }
   }, 1000);
 }
 
@@ -2069,10 +2089,8 @@ function set(id, val) {
 }
 
 function esc(s) {
-  if (s == null) return '';
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;');
+  return (s ?? '').toString().replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 // Format an ISO timestamp as a short local date, or em dash if missing.
@@ -2111,7 +2129,8 @@ buildColumnMenu();
 applyColumnVisibility();   // hide Owner (and any saved-off columns) on the initial empty table
 loadTriage();
 loadResults();
-loadSubscriptions();   // populate single-sub dropdown before any scan runs
+loadSubscriptions();   // populate the scope subscription picker before any scan runs
+onScopeTypeChange();   // show only the target picker matching the default scope
 // Check if a scan was already running when the page loaded
 fetch('/api/status').then(r => r.json()).then(s => {
   if (s.State === 'running') {

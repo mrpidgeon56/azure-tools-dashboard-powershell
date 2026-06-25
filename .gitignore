@@ -1,7 +1,9 @@
 # ── Runtime scan artifacts ───────────────────────────────────────────────
-# Written by the scanners at runtime and regenerated on every scan. They hold
-# real tenant data (user lists, role assignments, resource inventory, costs),
-# so they are deliberately NOT version-controlled.
+# Written by the scanners at runtime (into data/) and regenerated on every scan.
+# They hold real tenant data (user lists, role assignments, resource inventory,
+# costs), so they are deliberately NOT version-controlled. data/.gitkeep keeps
+# the directory present on a fresh clone.
+data/*.json
 *-scan-results.json
 *-scan-progress.json
 scan-results.json
