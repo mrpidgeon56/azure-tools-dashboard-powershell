@@ -262,10 +262,15 @@ try {
         $listUri = "$baseUrl`?restype=container&comp=list&maxresults=5000"
         if ($pathPrefix) { $listUri += "&prefix=" + [uri]::EscapeDataString($pathPrefix) }
         if ($marker)     { $listUri += "&marker="  + [uri]::EscapeDataString($marker) }
-        $resp = Invoke-RestMethod -Method GET -Uri $listUri -Headers $blobHeaders -ErrorAction Stop
+        # Invoke-WebRequest gives the raw XML body as text; Invoke-RestMethod would
+        # auto-deserialize application/xml into an XmlDocument that stringifies to junk.
+        $resp = Invoke-WebRequest -Method GET -Uri $listUri -Headers $blobHeaders -ErrorAction Stop
         # Strip the BOM that the XML listing sometimes carries, then parse.
-        $xml = [xml](("$resp") -replace '^\xEF\xBB\xBF', '' -replace '^[^<]*<', '<')
-        foreach ($b in @($xml.EnumerationResults.Blobs.Blob)) {
+        $xml = [xml](("$($resp.Content)") -replace '^\xEF\xBB\xBF', '' -replace '^[^<]*<', '<')
+        # <Blobs/> has no <Blob> child on an empty page — guard before iterating (StrictMode).
+        $blobsNode = $xml.EnumerationResults.Blobs
+        $blobList  = if ($blobsNode) { @($blobsNode.SelectNodes('Blob')) } else { @() }
+        foreach ($b in $blobList) {
             $name = "$($b.Name)"
             if (-not $name) { continue }
             $m = $hourRe.Match('/' + $name)
@@ -307,7 +312,7 @@ for ($idx = 0; $idx -lt $total; $idx++) {
     Set-ScanProgress -Phase "parse" -Fetched $idx -Total $total -FlaggedSoFar $decisionCounts.Denied `
                      -Message "Parsing flow records ($($idx + 1)/$total)..."
     try {
-        $blobUri = "$baseUrl/" + (($name -split '/') | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
+        $blobUri = "$baseUrl/" + ((($name -split '/') | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/')
         $raw = Invoke-RestMethod -Method GET -Uri $blobUri -Headers $blobHeaders -ErrorAction Stop
         $payload = if ($raw -is [string]) { $raw | ConvertFrom-Json } else { $raw }
     } catch {

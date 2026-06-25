@@ -132,6 +132,7 @@ recoveryservicesresources
 
 Write-Progress2 "Querying Recovery Services protected items..."
 $protectedMap = @{}
+$protectedQueryOk = $true   # if this query fails (e.g. no Backup Reader) we must NOT assert "no backup"
 try {
     $protectedRows = Invoke-GraphPaged $protectedKql
     foreach ($p in $protectedRows) {
@@ -140,6 +141,7 @@ try {
     }
 } catch {
     # The recoveryservicesresources table may be unavailable without Backup Reader.
+    $protectedQueryOk = $false
     $errors.Add(@{ Stage = "resourcegraph-protecteditems"; Error = (Format-Exception $_) })
     Write-Progress2 "Recovery Services query failed ($(Format-Exception $_))."
 }
@@ -148,7 +150,7 @@ $total = $vms.Count
 Set-ScanProgress -Phase "scanning" -Total $total -Message "Evaluating $total VM(s)..."
 
 $subSet = [System.Collections.Generic.HashSet[string]]::new()
-$protected = 0; $unprotected = 0; $unhealthy = 0; $done = 0
+$protected = 0; $unprotected = 0; $unhealthy = 0; $unknown = 0; $done = 0
 
 foreach ($vm in $vms) {
     $done++
@@ -170,10 +172,15 @@ foreach ($vm in $vms) {
             $severity = 'medium'
             $rec = @{ Action = 'Check backup health'; Reason = "Backup health is '$health'. Investigate failed or stale recovery points." }
         }
-    } else {
+    } elseif ($protectedQueryOk) {
         $unprotected++
         $severity = 'high'
         $rec = @{ Action = 'Enable backup'; Reason = 'VM has no Azure Backup protection configured.' }
+    } else {
+        # Recovery Services query failed (likely missing Backup Reader) — don't assert "no backup".
+        $unknown++
+        $severity = 'low'
+        $rec = @{ Action = 'Check backup status'; Reason = 'Backup status unknown — the Recovery Services protected-items query failed (the signed-in identity likely lacks Backup Reader). This VM may already be protected.' }
     }
 
     $sub = "$(Get-Prop $vm 'sub')"
@@ -209,7 +216,10 @@ foreach ($vm in $vms) {
     }
 }
 
-$coverage = if ($total -gt 0) { [math]::Round(($protected / $total) * 100, 1) } else { 100.0 }
+# Coverage is computed over VMs we could actually assess (protected + unprotected); VMs whose
+# backup status is unknown (query failed) are excluded so a permissions gap can't read as 0%.
+$assessed = $protected + $unprotected
+$coverage = if ($assessed -gt 0) { [math]::Round(($protected / $assessed) * 100, 1) } else { 100.0 }
 
 # ── write output ──────────────────────────────────────────────────────────────
 $output = @{
@@ -224,6 +234,7 @@ $output = @{
         Protected         = $protected
         Unprotected       = $unprotected
         Unhealthy         = $unhealthy
+        Unknown           = $unknown
         CoveragePercent   = $coverage
         TotalItems        = $items.Count
         ErrorCount        = $errors.Count

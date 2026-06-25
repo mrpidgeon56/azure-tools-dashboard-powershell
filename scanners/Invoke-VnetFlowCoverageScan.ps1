@@ -93,12 +93,12 @@ function Get-NameFromResourceId ([string]$id) {
 }
 
 # Page a Resource Graph query to exhaustion (Search-AzGraph caps a page at 1000 rows).
-function Invoke-GraphPaged ([string]$Query, [hashtable]$Args) {
+function Invoke-GraphPaged ([string]$Query, [hashtable]$GraphArgs) {   # NOT $Args — that is a reserved automatic variable, binding would fail
     $rows = [System.Collections.Generic.List[object]]::new()
     $skip = $null
     do {
-        $page = if ($skip) { Search-AzGraph -Query $Query -First 1000 -SkipToken $skip @Args -ErrorAction Stop }
-                else        { Search-AzGraph -Query $Query -First 1000 @Args -ErrorAction Stop }
+        $page = if ($skip) { Search-AzGraph -Query $Query -First 1000 -SkipToken $skip @GraphArgs -ErrorAction Stop }
+                else        { Search-AzGraph -Query $Query -First 1000 @GraphArgs -ErrorAction Stop }
         foreach ($r in @($page)) { $rows.Add($r) }
         $skip = if ($page.PSObject.Properties['SkipToken']) { $page.SkipToken } else { $null }
     } while ($skip)
@@ -167,7 +167,7 @@ resources
 | where type =~ 'microsoft.network/networkwatchers/flowlogs'
 | project id, name, location, enabled = tobool(properties.enabled), targetResourceId = tostring(properties.targetResourceId), storageId = tostring(properties.storageId)
 "@
-    foreach ($row in (Invoke-GraphPaged -Query $flKql -Args @{})) {
+    foreach ($row in (Invoke-GraphPaged -Query $flKql -GraphArgs @{})) {
         $target = "$(Get-Prop $row 'targetResourceId')"
         if ($target.ToLowerInvariant() -notlike '*/virtualnetworks/*') { continue }   # vnet_only
         $key = $target.ToLowerInvariant()
@@ -199,7 +199,7 @@ $rgClause| extend sub = tostring(subscriptionId), rg = tostring(resourceGroup)
 "@
 $rows = [System.Collections.Generic.List[object]]::new()
 try {
-    $rows = Invoke-GraphPaged -Query $vnKql -Args $graphArgs
+    $rows = Invoke-GraphPaged -Query $vnKql -GraphArgs $graphArgs
 } catch {
     $errors.Add(@{ Stage = "resourcegraph"; Error = (Format-Exception $_) })
     Write-Progress2 "Resource Graph query failed ($(Format-Exception $_))."

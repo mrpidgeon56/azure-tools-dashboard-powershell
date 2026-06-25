@@ -261,7 +261,7 @@ foreach ($subId in $subIds) {
                 $ts = if ($tsRaw) { [DateTimeOffset]$tsRaw } else { $null }
                 $resourceId = [string](Get-Prop $e 'resourceId')
                 $corr = [string](Get-Prop $e 'correlationId')
-                $key = if ($corr) { $corr } elseif ($resourceId -or $ts) { "$resourceId$($ts.ToString("o"))" } else { "" }
+                $key = if ($corr) { $corr } elseif ($resourceId -or $ts) { "$resourceId$(if ($ts) { $ts.ToString("o") })" } else { "" }
 
                 $prev = $null
                 if ($seen.ContainsKey($key)) { $prev = $seen[$key] }

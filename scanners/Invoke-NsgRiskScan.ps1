@@ -93,7 +93,9 @@ function Get-Prop ($obj, [string]$name) {
 }
 
 # ── NSG risk evaluation helpers (port of nsg_risk.py) ──────────────────────────
-$mgmtPorts = [ordered]@{ 22 = "SSH"; 3389 = "RDP"; 3306 = "MySQL"; 5432 = "PostgreSQL"; 1433 = "SQL"; 6379 = "Redis"; 27017 = "MongoDB" }
+# Plain @{} (key-indexed). NOT [ordered]: an OrderedDictionary treats an Int32 index as a
+# POSITIONAL lookup, so $mgmtPorts[22] would throw "Index was out of range" and abort the scan.
+$mgmtPorts = @{ 22 = "SSH"; 3389 = "RDP"; 3306 = "MySQL"; 5432 = "PostgreSQL"; 1433 = "SQL"; 6379 = "Redis"; 27017 = "MongoDB" }
 $internetSources = @('*', 'internet', '0.0.0.0/0', '::/0', 'any')
 
 function ConvertTo-StrList ($v) {

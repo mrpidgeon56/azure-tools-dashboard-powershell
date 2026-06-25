@@ -29,6 +29,7 @@ param(
     [string] $ProgressPath         = "",          # if set, incremental progress JSON is written here
     [ValidateSet('All','Subscription')]
     [string] $ScopeType            = "All",        # scan scope: whole tenant, or one subscription
+    [string] $ManagementGroupId    = "",           # accepted for ported-tool dispatcher consistency; MG scope is not exposed for this tool
     [string] $SingleSubscriptionId = ""            # optional: scan just one subscription
 )
 Set-StrictMode -Version Latest

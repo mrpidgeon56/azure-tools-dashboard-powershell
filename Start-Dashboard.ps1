@@ -126,7 +126,8 @@ $script:portedTools = @(
     @{ Prefix = 'appcreds';      Slug = 'app-credential-expiry';  Scanner = 'Invoke-AppCredentialExpiryScan.ps1'; Scope = 'none' }
     @{ Prefix = 'policycompliance'; Slug = 'policy-compliance';   Scanner = 'Invoke-PolicyComplianceScan.ps1';    Scope = 'subscription' }
     @{ Prefix = 'exemptions';    Slug = 'exemption-tracker';      Scanner = 'Invoke-ExemptionTrackerScan.ps1';    Scope = 'subscription' }
-    @{ Prefix = 'deployments';   Slug = 'deployment-tracker';     Scanner = 'Invoke-DeploymentTrackerScan.ps1';   Scope = 'subscription' }
+    @{ Prefix = 'deployments';   Slug = 'deployment-tracker';     Scanner = 'Invoke-DeploymentTrackerScan.ps1';   Scope = 'subscription'
+       Extra = @( @{ Body = 'lookbackDays'; Param = 'LookbackDays'; Int = $true } ) }
     @{ Prefix = 'backup';        Slug = 'backup-coverage';        Scanner = 'Invoke-BackupCoverageScan.ps1';      Scope = 'graph' }
     @{ Prefix = 'resilience';    Slug = 'resilience-audit';       Scanner = 'Invoke-ResilienceAuditScan.ps1';     Scope = 'graph' }
     @{ Prefix = 'resourcehealth';Slug = 'resource-health';        Scanner = 'Invoke-ResourceHealthScan.ps1';      Scope = 'graph' }
