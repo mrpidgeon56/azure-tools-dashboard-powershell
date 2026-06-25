@@ -1,0 +1,68 @@
+name: CI
+
+# Gate every pull request into main (and direct pushes to main) on security + lint checks.
+#
+# IMPORTANT: a workflow file alone does NOT block merges. In the repo's branch-protection
+# rule for `main`, enable "Require status checks to pass before merging" and mark these three
+# checks required:  "PowerShell lint & security"  •  "Contract tests"  •  "Secret scan (gitleaks)".
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: a read-only token. No job here needs write access.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref (e.g. new pushes to a PR branch).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  powershell:
+    name: PowerShell lint & security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # Installed fresh and version-pinned each run (no module cache): a security/lint tool
+      # should be reproducible and immune to cache poisoning from PR-populated caches.
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+
+      - name: Lint & code-security scan
+        shell: pwsh
+        run: ./.github/scripts/Run-Lint.ps1
+
+  contract-tests:
+    name: Contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Run contract checks (no Azure required)
+        shell: pwsh
+        run: ./tests/Run-Tests.ps1 -SkipServer
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0   # full history so gitleaks scans every commit in the PR/push
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Detection-only gate: the step's exit code is the gate, no PR-comment API write needed
+          # (so it works the same for fork PRs, which only get a read-only token).
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          # GITLEAKS_LICENSE is free but REQUIRED for GitHub *organization* repos — without it the
+          # step fails there. Personal repos run with no license. (To drop the license machinery
+          # entirely, run the gitleaks binary directly: `gitleaks detect --source . --redact`.)
