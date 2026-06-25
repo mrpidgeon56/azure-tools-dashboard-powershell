@@ -161,7 +161,7 @@
   <div class="auth">
     <span class="auth-status" id="authStatus">Checking session…</span>
     <select class="auth-sub" id="authSub" onchange="onSubChange()" title="Active subscription" style="display:none"></select>
-    <button class="auth-btn" id="authBtn" onclick="onAuthClick()" disabled>Sign in</button>
+    <button class="auth-btn signout" id="authBtn" onclick="onStopClick()" disabled title="Stop the dashboard server">■ Stop</button>
   </div>
 </header>
 
@@ -290,9 +290,11 @@
 </button>
 
 <script>
-  // ── On-demand authentication ──────────────────────────────────────────────
-  // No credentials are stored: the server holds the Az context in process memory
-  // only. Sign in opens an interactive Azure login; sign out clears the context.
+  // ── Session status + stop control ─────────────────────────────────────────
+  // Authentication happens in the terminal (Connect-AzAccount) before the dashboard
+  // is started; the server inherits that context in process memory only — no
+  // credentials are stored. The header shows the active account and a Stop button
+  // that shuts the server down (your terminal session stays signed in).
   async function refreshAuth() {
     try {
       const r = await fetch('/api/auth/status');
@@ -307,20 +309,16 @@
     if (s && s.authenticated) {
       status.textContent = s.account;
       status.className = 'auth-status on';
-      btn.textContent = 'Sign out';
-      btn.className = 'auth-btn signout';
-      btn.dataset.mode = 'logout';
-      btn.disabled = false;
       loadAuthSubs(s.subscriptionId);   // populate the active-subscription picker
     } else {
-      status.textContent = s ? 'Not signed in' : 'Server offline';
+      status.textContent = s ? 'Not connected — run Connect-AzAccount' : 'Server offline';
       status.className = 'auth-status off';
-      btn.textContent = 'Sign in';
-      btn.className = 'auth-btn';
-      btn.dataset.mode = 'login';
-      btn.disabled = !s;           // can't sign in if the server isn't reachable
       sub.style.display = 'none';
     }
+    // The button always stops the dashboard; enabled whenever the server is reachable.
+    btn.textContent = '■ Stop';
+    btn.className = 'auth-btn signout';
+    btn.disabled = !s;
   }
 
   // Populate the active-subscription dropdown so the user can switch context
@@ -358,46 +356,28 @@
     sel.disabled = false;
   }
 
-  async function onAuthClick() {
+  // Stop the dashboard server. Authentication lives in the terminal session, so this
+  // only shuts the server down (it does not disconnect your Az session).
+  async function onStopClick() {
     const btn = document.getElementById('authBtn');
-    const status = document.getElementById('authStatus');
-    const mode = btn.dataset.mode;
-    if (mode === 'logout') {
-      // Signing out stops the dashboard server, so confirm before doing it.
-      if (!confirm('Sign out and stop the dashboard?\n\nThe server will shut down — restart it with ./Start-Dashboard.ps1 to use the tools again.')) {
-        return;
-      }
-      btn.disabled = true;
-      try {
-        await fetch('/api/auth/logout', { method: 'POST' });
-      } catch {
-        /* the server may close the connection as it stops — treat as success */
-      }
-      showStopped();
+    if (!confirm('Stop the dashboard?\n\nThe server will shut down — restart it with ./Start-Dashboard.ps1 to use the tools again.')) {
       return;
     }
     btn.disabled = true;
     try {
-      btn.textContent = 'Check your browser…';
-      status.textContent = 'Awaiting Azure sign-in…';
-      status.className = 'auth-status off';
-      const r = await fetch('/api/auth/login', { method: 'POST' });
-      if (!r.ok) {
-        const e = await r.json().catch(() => ({}));
-        alert('Sign-in failed: ' + (e.error || 'unknown error'));
-      }
+      await fetch('/api/shutdown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     } catch {
-      alert('Could not reach the dashboard server.');
+      /* the server closes the connection as it stops — treat as success */
     }
-    refreshAuth();
+    showStopped();
   }
 
-  // Terminal state after sign-out: the server has stopped, so don't poll it.
+  // Terminal state after Stop: the server is down, so don't poll it.
   function showStopped() {
     const status = document.getElementById('authStatus');
     const btn = document.getElementById('authBtn');
     const sub = document.getElementById('authSub');
-    status.textContent = 'Signed out — dashboard stopped';
+    status.textContent = 'Dashboard stopped';
     status.className = 'auth-status off';
     btn.textContent = 'Stopped';
     btn.className = 'auth-btn';

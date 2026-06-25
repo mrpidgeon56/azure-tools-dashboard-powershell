@@ -88,6 +88,7 @@
     font-size: 13px; font-family: var(--font); cursor: pointer;
   }
   .sel-grid select:disabled { opacity: .5; cursor: not-allowed; }
+  .sel-run { display: flex; justify-content: flex-end; margin-top: 14px; }
 
   /* ── forecast horizon toggle ───────────────────────────────── */
   .horizon-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; }
@@ -200,15 +201,14 @@
   </div>
   <div class="header-actions">
     <button id="refreshBtn" class="ghost" onclick="loadResults(true)" title="Reload last projection">↻</button>
-    <button id="scanBtn" class="primary" onclick="startScan()" disabled>Run Projection</button>
     <button id="cancelBtn" class="ghost" onclick="cancelScan()" style="display:none;">Cancel</button>
   </div>
 </header>
 
 <main>
-  <!-- workspace selectors (always visible) -->
+  <!-- scanner configuration (always visible) -->
   <div class="selectors">
-    <h3>Workspace</h3>
+    <h3>⚙ Scanner configuration</h3>
     <div class="hint">Pick a subscription, then its resource group, then a Log Analytics workspace.
        Cost is projected per table from each table's billable ingestion and current retention settings.</div>
     <div class="sel-grid">
@@ -224,6 +224,9 @@
         <label class="lbl" for="selWs">Log Analytics workspace</label>
         <select id="selWs" onchange="onWsChange()" disabled><option value="">Select a resource group first</option></select>
       </div>
+    </div>
+    <div class="sel-run">
+      <button id="scanBtn" class="primary" onclick="startScan()" disabled>▶ Run Projection</button>
     </div>
   </div>
 
@@ -423,7 +426,7 @@
     } catch { alert('Could not reach the dashboard server. Is Start-Dashboard.ps1 running?'); }
   }
 
-  async function cancelScan() { try { await fetch('/api/la/scan/cancel', { method: 'POST' }); } catch {} }
+  async function cancelScan() { try { await fetch('/api/la/scan/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch {} }
 
   function setScanning(on) {
     document.getElementById('scanBtn').disabled = on || !selectedWorkspace();

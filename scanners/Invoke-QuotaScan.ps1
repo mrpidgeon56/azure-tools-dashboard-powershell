@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+#Requires -Modules Az.Accounts, Az.ResourceGraph
 <#
 .SYNOPSIS
     Scans Azure subscriptions for resource-usage vs. quota limits and surfaces the
@@ -24,8 +26,11 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $OutputPath           = "$PSScriptRoot/quota-scan-results.json",
+    [string] $OutputPath           = "$PSScriptRoot/../data/quota-scan-results.json",
     [string] $ProgressPath         = "",          # if set, incremental progress JSON is written here
+    [ValidateSet('All','ManagementGroup','Subscription')]
+    [string] $ScopeType            = "All",        # scan scope: whole tenant, one management group, or one subscription
+    [string] $ManagementGroupId    = "",           # when -ScopeType ManagementGroup: the MG to recurse (all child subs)
     [string] $SingleSubscriptionId = "",          # optional: scan just one subscription
     [int]    $CriticalThreshold    = 90,          # usage % at/above this ⇒ Critical
     [int]    $WarningThreshold     = 75,          # usage % at/above this ⇒ Warning
@@ -84,12 +89,17 @@ function Format-Exception ($err) {
     return ($msg -replace '\s+', ' ').Trim()
 }
 
-function Get-Token ([string]$ResourceUrl) {
-    $t = Get-AzAccessToken -ResourceUrl $ResourceUrl -ErrorAction Stop
-    if ($t.Token -is [System.Security.SecureString]) {
-        return [System.Net.NetworkCredential]::new('', $t.Token).Password
+# Returns the raw ARM access token plus its expiry, so callers can refresh before it lapses.
+# Uses -ResourceTypeName Arm (Az.Accounts 5.x deprecates -ResourceUrl).
+function Get-ArmToken {
+    $t = Get-AzAccessToken -ResourceTypeName Arm -WarningAction SilentlyContinue -ErrorAction Stop
+    $tok = if ($t.Token -is [System.Security.SecureString]) {
+        [System.Net.NetworkCredential]::new('', $t.Token).Password
+    } else {
+        [string]$t.Token
     }
-    return [string]$t.Token
+    $expires = if ($t.PSObject.Properties['ExpiresOn']) { [DateTimeOffset]$t.ExpiresOn } else { [DateTimeOffset]::UtcNow.AddMinutes(55) }
+    return [pscustomobject]@{ Token = $tok; ExpiresOn = $expires }
 }
 
 function Get-Prop ($obj, [string]$name) {
@@ -119,8 +129,15 @@ $flaggedSoFar = 0
 
 Set-ScanProgress -Phase "init" -Message "Acquiring ARM token..."
 Write-Progress2 "Acquiring ARM token from the active Az session..."
-$armToken = Get-Token "https://management.azure.com/"
-$armHeaders = @{ Authorization = "Bearer $armToken" }
+$armTok      = Get-ArmToken
+$armExpires  = $armTok.ExpiresOn
+$armHeaders  = @{ Authorization = "Bearer $($armTok.Token)" }
+
+# Lazy refresh: the ARM token is reused across the whole sub/region/provider loop, which
+# can run long on large tenants and outlive the token. Before each provider request the loop
+# checks $armExpires; when within ~5 minutes of expiry it re-acquires the token and rebuilds
+# $armHeaders in place. Best-effort: on failure keep the current token and let the request
+# surface any auth error.
 
 # ── subscription name map ────────────────────────────────────────────────────
 $subNames = @{}
@@ -133,15 +150,38 @@ try {
 }
 
 # ── discover active (subscription, region) pairs via Resource Graph ──────────
-Write-Progress2 "Discovering active regions via Resource Graph..."
+# Scope resolution: a management group recurses to all its child subscriptions
+# (Search-AzGraph -ManagementGroup); a single subscription restricts to one;
+# otherwise the query spans every accessible subscription. -SingleSubscriptionId
+# still works on its own (standalone CLI) even when -ScopeType is left at All.
+$scopeLabel = if ($ScopeType -eq 'ManagementGroup' -and $ManagementGroupId) { "management group '$ManagementGroupId' (recursive)" }
+              elseif ($SingleSubscriptionId) { "subscription '$SingleSubscriptionId'" }
+              else { "all accessible subscriptions" }
+Write-Progress2 "Discovering active regions via Resource Graph — scope: $scopeLabel..."
+
+if (-not (Get-Command Search-AzGraph -ErrorAction SilentlyContinue)) {
+    throw "Azure Resource Graph (Search-AzGraph) is unavailable. Install it with: Install-Module Az.ResourceGraph -Scope CurrentUser"
+}
+
 $pairs = [System.Collections.Generic.List[object]]::new()
 try {
     $kql = "Resources | where isnotempty(location) and location !in ('global','') | summarize by subscriptionId, location | order by subscriptionId asc, location asc"
-    $rows = if ($SingleSubscriptionId) {
-        @(Search-AzGraph -Query $kql -Subscription $SingleSubscriptionId -First 1000 -ErrorAction Stop)
-    } else {
-        @(Search-AzGraph -Query $kql -First 1000 -ErrorAction Stop)
-    }
+    # Scope-specific args spliced into each paged call. Search-AzGraph caps a single page at
+    # 1000 rows regardless of -First, so -First 1000 alone silently truncates large tenants —
+    # we page with SkipToken until exhausted (dropped regions would hide Critical quotas).
+    $scopeArgs = @{}
+    if ($ScopeType -eq 'ManagementGroup' -and $ManagementGroupId) { $scopeArgs['ManagementGroup'] = $ManagementGroupId }
+    elseif ($SingleSubscriptionId)                                { $scopeArgs['Subscription']    = $SingleSubscriptionId }
+
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $skip = $null
+    do {
+        $page = if ($skip) { Search-AzGraph -Query $kql -First 1000 -SkipToken $skip @scopeArgs -ErrorAction Stop }
+                else        { Search-AzGraph -Query $kql -First 1000 @scopeArgs -ErrorAction Stop }
+        foreach ($row in @($page)) { $rows.Add($row) }
+        $skip = if ($page.PSObject.Properties['SkipToken']) { $page.SkipToken } else { $null }
+    } while ($skip)
+
     foreach ($r in $rows) {
         $sid = "$($r.subscriptionId)"; $loc = "$($r.location)"
         if ($sid -and $loc) { $pairs.Add(@{ Sub = $sid; Region = $loc }) }
@@ -166,6 +206,18 @@ foreach ($pair in $pairs) {
 
     foreach ($prov in $providers) {
         $done++
+
+        # Refresh the ARM token if it is within ~5 minutes of expiry (long scans outlive it).
+        if ($armExpires -le [DateTimeOffset]::UtcNow.AddMinutes(5)) {
+            try {
+                $armTok     = Get-ArmToken
+                $armExpires = $armTok.ExpiresOn
+                $armHeaders = @{ Authorization = "Bearer $($armTok.Token)" }
+            } catch {
+                <# keep the current token; the request below will surface any auth error #>
+            }
+        }
+
         $apiVer = $ProviderApi[$prov]
         $uri = "https://management.azure.com/subscriptions/$sub/providers/Microsoft.$prov/locations/$region/usages?api-version=$apiVer"
         try {
@@ -230,6 +282,9 @@ $output = @{
     ScanMetadata = @{
         ScanTime          = $scanStartTime.ToString("o")
         CompletedTime     = (Get-Date).ToString("o")
+        ScopeType         = $ScopeType
+        ManagementGroupId = $ManagementGroupId
+        ScopeLabel        = $scopeLabel
         Subscriptions     = $subSet.Count
         Regions           = $regionSet.Count
         Providers         = @($providers)

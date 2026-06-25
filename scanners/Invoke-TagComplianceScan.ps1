@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+#Requires -Modules Az.Accounts, Az.ResourceGraph
 <#
 .SYNOPSIS
     Audits Azure tag usage across the tenant's subscriptions, resource groups, and
@@ -29,12 +31,15 @@
 #>
 [CmdletBinding()]
 param(
-    [string]   $OutputPath           = "$PSScriptRoot/tag-scan-results.json",
+    [string]   $OutputPath           = "$PSScriptRoot/../data/tag-scan-results.json",
     [string]   $ProgressPath         = "",      # if set, incremental progress JSON is written here
     [string[]] $RequiredTags         = @(),     # required tag KEYS (e.g. Environment, Owner, CostCenter)
     [object]   $AllowedTagValues     = $null,   # optional map: key -> allowed values[] (PSCustomObject or hashtable)
     [string]   $SingleSubscriptionId = "",      # if set, only audit this one subscription
+    [ValidateSet('All','ManagementGroup','Subscription','ResourceGroup')]
+    [string]   $ScopeType            = "All",   # scope selector from the dashboard
     [string]   $ManagementGroupId    = "",      # if set, scope the scan recursively to this management group's hierarchy
+    [string]   $ResourceGroup        = "",      # if set (with a subscription), restrict to this resource group
     [ValidateSet('Exclusive','Inclusive')]
     [string]   $Mode                 = "Exclusive", # Exclusive = surface objects in violation; Inclusive = surface objects that carry the tags
     [string[]] $ExcludedResourceTypes = @(      # resource types that cannot carry tags (prefix match, case-insensitive)
@@ -131,9 +136,9 @@ function Merge-Tags {
 function Test-Untaggable {
     param([string]$Type)
     if (-not $Type) { return $false }
-    $t = $Type.ToLower()
+    $t = $Type.ToLowerInvariant()
     foreach ($x in $ExcludedResourceTypes) {
-        if ($t.StartsWith($x.ToLower())) { return $true }
+        if ($t.StartsWith($x.ToLowerInvariant())) { return $true }
     }
     return $false
 }
@@ -151,7 +156,7 @@ function Get-AllowedValueMap {
     }
     foreach ($p in $pairs) {
         $vals = @($p.Value | ForEach-Object { [string]$_ } | Where-Object { $_ -ne '' })
-        if ($p.Name) { $map[([string]$p.Name).ToLower()] = $vals }
+        if ($p.Name) { $map[([string]$p.Name).ToLowerInvariant()] = $vals }
     }
     return $map
 }
@@ -176,11 +181,11 @@ function Get-TagCompliance {
 
     # Index effective tag keys by lower-case for case-insensitive matching.
     $byLower = @{}
-    foreach ($k in $EffectiveTags.Keys) { $byLower[$k.ToLower()] = $k }
+    foreach ($k in $EffectiveTags.Keys) { $byLower[$k.ToLowerInvariant()] = $k }
 
     foreach ($req in $RequiredTags) {
         if (-not $req) { continue }
-        $lr = $req.ToLower()
+        $lr = $req.ToLowerInvariant()
         if (-not $byLower.ContainsKey($lr)) {
             $missing.Add($req)
             $violations.Add(@{ Type = 'missing'; Key = $req; Detail = "Required tag '$req' is not present." })
@@ -266,12 +271,19 @@ $flaggedSoFar = 0
 
 $script:allowedMap = Get-AllowedValueMap $AllowedTagValues
 
-$subFilter = if ($SingleSubscriptionId) { " | where subscriptionId == '$SingleSubscriptionId'" } else { "" }
-$mgScope   = if ($ManagementGroupId) { @($ManagementGroupId) } else { @() }
+# Scope resolution. Backward-compatible: ScopeType defaults to 'All', and a lone
+# -SingleSubscriptionId (ScopeType unset) still restricts to that one subscription.
+# Precedence: a management group (when ScopeType=ManagementGroup) recurses its hierarchy;
+# otherwise a subscription filter narrows to one subscription; an optional resource-group
+# filter narrows further within that subscription (case-insensitive, =~).
+$useMg     = ($ScopeType -eq 'ManagementGroup' -and $ManagementGroupId)
+$subFilter = if (-not $useMg -and $SingleSubscriptionId) { " | where subscriptionId == '$SingleSubscriptionId'" } else { "" }
+$rgFilter  = if ($ResourceGroup) { " | where resourceGroup =~ '$ResourceGroup'" } else { "" }
+$mgScope   = if ($useMg) { @($ManagementGroupId) } else { @() }
 
 Set-ScanProgress -Phase "init" -Message "Querying Azure Resource Graph..."
 Write-Progress2 "Auditing tags against required keys: $(if ($RequiredTags.Count) { $RequiredTags -join ', ' } else { '(none specified)' })"
-Write-Progress2 "Mode: $Mode$(if ($ManagementGroupId) { " | management group (recursive): $ManagementGroupId" })"
+Write-Progress2 "Mode: $Mode$(if ($useMg) { " | management group (recursive): $ManagementGroupId" } elseif ($SingleSubscriptionId) { " | subscription: $SingleSubscriptionId$(if ($ResourceGroup) { " | resource group: $ResourceGroup" })" })"
 
 if (-not (Get-Command Search-AzGraph -ErrorAction SilentlyContinue)) {
     throw "Azure Resource Graph (Search-AzGraph) is unavailable. Install it with: Install-Module Az.ResourceGraph -Scope CurrentUser"
@@ -291,18 +303,18 @@ foreach ($s in @($subRows)) {
 
 # ── 2. resource groups (tags) ────────────────────────────────────────────────
 Write-Progress2 "Querying resource groups..."
-$rgRows = Invoke-GraphQuery "ResourceContainers | where type == 'microsoft.resources/subscriptions/resourcegroups'$subFilter | project id, name, subscriptionId, resourceGroup, location, tags" -ManagementGroup $mgScope
+$rgRows = Invoke-GraphQuery "ResourceContainers | where type == 'microsoft.resources/subscriptions/resourcegroups'$subFilter$(if ($ResourceGroup) { " | where name =~ '$ResourceGroup'" }) | project id, name, subscriptionId, resourceGroup, location, tags" -ManagementGroup $mgScope
 $rgTags = @{}     # "subId/rgname".ToLower() -> [hashtable] tags
 foreach ($g in @($rgRows)) {
     $sid = [string](Get-Prop $g 'subscriptionId')
     $rg  = [string](Get-Prop $g 'name')
     if (-not $sid -or -not $rg) { continue }
-    $rgTags["$sid/$($rg.ToLower())"] = ConvertTo-TagMap (Get-Prop $g 'tags')
+    $rgTags["$sid/$($rg.ToLowerInvariant())"] = ConvertTo-TagMap (Get-Prop $g 'tags')
 }
 
 # ── 3. resources (tags + type) ───────────────────────────────────────────────
 Write-Progress2 "Querying resources..."
-$resRows = Invoke-GraphQuery "Resources$subFilter | project id, name, type, subscriptionId, resourceGroup, location, tags" -ManagementGroup $mgScope
+$resRows = Invoke-GraphQuery "Resources$subFilter$rgFilter | project id, name, type, subscriptionId, resourceGroup, location, tags" -ManagementGroup $mgScope
 
 $total = @($subRows).Count + @($rgRows).Count + @($resRows).Count
 Set-ScanProgress -Phase "scanning" -Fetched 0 -Total $total -Message "Evaluating $total object(s)..."
@@ -360,7 +372,7 @@ Set-ScanProgress -Phase "scanning" -Fetched $processed -Total $total -FlaggedSoF
 foreach ($g in @($rgRows)) {
     $sid = [string](Get-Prop $g 'subscriptionId'); $rg = [string](Get-Prop $g 'name')
     if (-not $sid -or -not $rg) { continue }
-    $own = $rgTags["$sid/$($rg.ToLower())"]
+    $own = $rgTags["$sid/$($rg.ToLowerInvariant())"]
     $eff = Merge-Tags ($subTags[$sid]) $own
     & $addObject -ScopeType 'ResourceGroup' -Name $rg -Id ([string](Get-Prop $g 'id')) `
         -SubId $sid -ResourceGroup $rg -ResourceType $null -Location ([string](Get-Prop $g 'location')) `
@@ -376,7 +388,7 @@ foreach ($r in @($resRows)) {
     $rg   = [string](Get-Prop $r 'resourceGroup')
     $type = [string](Get-Prop $r 'type')
     $own  = ConvertTo-TagMap (Get-Prop $r 'tags')
-    $parent = Merge-Tags ($subTags[$sid]) ($rg ? $rgTags["$sid/$($rg.ToLower())"] : $null)
+    $parent = Merge-Tags ($subTags[$sid]) ($rg ? $rgTags["$sid/$($rg.ToLowerInvariant())"] : $null)
     $eff  = Merge-Tags $parent $own
     & $addObject -ScopeType 'Resource' -Name ([string](Get-Prop $r 'name')) -Id ([string](Get-Prop $r 'id')) `
         -SubId $sid -ResourceGroup $rg -ResourceType $type -Location ([string](Get-Prop $r 'location')) `
@@ -414,7 +426,9 @@ $output = @{
         CompletedTime     = (Get-Date).ToString("o")
         RequiredTags      = @($RequiredTags)
         Mode              = $Mode
+        ScopeType         = $ScopeType
         ManagementGroupId = $ManagementGroupId
+        ResourceGroup     = $ResourceGroup
         TotalObjects      = $objects.Count
         Subscriptions     = $subCount
         ResourceGroups    = $rgCount

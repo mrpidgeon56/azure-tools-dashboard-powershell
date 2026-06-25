@@ -1,59 +1,67 @@
+#Requires -Version 7.0
+#Requires -Modules Az.Accounts, Az.ResourceGraph, ThreadJob
 <#
 .SYNOPSIS
     Starts a local HTTP dashboard server for the Azure Idle Resource Group scanner.
 
-    Authentication is on-demand: the server does NOT sign in at startup. The user
-    signs in/out from the dashboard (POST /api/auth/login | /api/auth/logout) and
-    the Az context is held in process memory only, so no credentials are stored.
+    Authentication happens in the terminal BEFORE launch: run Connect-AzAccount, then
+    start this script in the same PowerShell session. The Az context is inherited and
+    held in process memory only, so no credentials are stored on disk. The dashboard
+    reports the active session and lets you switch subscription; the header "Stop" button
+    (POST /api/shutdown) shuts the server down without disconnecting your terminal session.
 
     Endpoints:
       GET  /                → serves home.html (hub)
       GET  /api/auth/status → reports whether an Az session is active
-      POST /api/auth/login  → interactive Connect-AzAccount (system browser)
-      POST /api/auth/logout → Disconnect-AzAccount + Clear-AzContext
+      POST /api/shutdown    → stops the server (Az context left intact)
       GET  /api/results     → returns last scan JSON (or empty state)
       POST /api/scan        → runs Invoke-AzureIdleScan.ps1 in background, streams status
       GET  /api/status      → returns current scan job status
 
 .EXAMPLE
-    .\Start-Dashboard.ps1
-    # Then open http://localhost:8080 in your browser
+    Connect-AzAccount            # sign in once (opens your browser)
+    .\Start-Dashboard.ps1        # then open http://localhost:8080
 #>
 [CmdletBinding()]
 param(
     [int]    $Port         = 8080,
-    [string] $ResultsPath  = "$PSScriptRoot/scan-results.json",
-    [string] $ProgressPath = "$PSScriptRoot/scan-progress.json",
-    [string] $ScanScript   = "$PSScriptRoot/Invoke-AzureIdleScan.ps1",
-    [string] $PaResultsPath  = "$PSScriptRoot/pa-scan-results.json",
-    [string] $PaProgressPath = "$PSScriptRoot/pa-scan-progress.json",
-    [string] $PaScanScript   = "$PSScriptRoot/Invoke-PrivilegedAccessScan.ps1",
-    [string] $EntraResultsPath  = "$PSScriptRoot/entra-scan-results.json",
-    [string] $EntraProgressPath = "$PSScriptRoot/entra-scan-progress.json",
-    [string] $EntraScanScript   = "$PSScriptRoot/Invoke-EntraUserScan.ps1",
-    [string] $TagResultsPath  = "$PSScriptRoot/tag-scan-results.json",
-    [string] $TagProgressPath = "$PSScriptRoot/tag-scan-progress.json",
-    [string] $TagScanScript   = "$PSScriptRoot/Invoke-TagComplianceScan.ps1",
-    [string] $LaResultsPath  = "$PSScriptRoot/la-cost-scan-results.json",
-    [string] $LaProgressPath = "$PSScriptRoot/la-cost-scan-progress.json",
-    [string] $LaScanScript   = "$PSScriptRoot/Invoke-LogAnalyticsCostScan.ps1",
-    [string] $QuotaResultsPath  = "$PSScriptRoot/quota-scan-results.json",
-    [string] $QuotaProgressPath = "$PSScriptRoot/quota-scan-progress.json",
-    [string] $QuotaScanScript   = "$PSScriptRoot/Invoke-QuotaScan.ps1",
+    # Loopback by default. Set to 127.0.0.1 for a specific IPv4 loopback, a hostname, or
+    # '+'/'*' to expose beyond loopback (the latter needs a URL-ACL reservation on Windows /
+    # root on Linux, and drops the loopback-only security posture — use with care).
+    [string] $BindAddress  = "localhost",
+    # Layout: scanners live in scanners/, runtime JSON in data/ (gitignored), pages in web/.
+    [string] $ResultsPath  = "$PSScriptRoot/data/scan-results.json",
+    [string] $ProgressPath = "$PSScriptRoot/data/scan-progress.json",
+    [string] $ScanScript   = "$PSScriptRoot/scanners/Invoke-AzureIdleScan.ps1",
+    [string] $PaResultsPath  = "$PSScriptRoot/data/pa-scan-results.json",
+    [string] $PaProgressPath = "$PSScriptRoot/data/pa-scan-progress.json",
+    [string] $PaScanScript   = "$PSScriptRoot/scanners/Invoke-PrivilegedAccessScan.ps1",
+    [string] $EntraResultsPath  = "$PSScriptRoot/data/entra-scan-results.json",
+    [string] $EntraProgressPath = "$PSScriptRoot/data/entra-scan-progress.json",
+    [string] $EntraScanScript   = "$PSScriptRoot/scanners/Invoke-EntraUserScan.ps1",
+    [string] $TagResultsPath  = "$PSScriptRoot/data/tag-scan-results.json",
+    [string] $TagProgressPath = "$PSScriptRoot/data/tag-scan-progress.json",
+    [string] $TagScanScript   = "$PSScriptRoot/scanners/Invoke-TagComplianceScan.ps1",
+    [string] $LaResultsPath  = "$PSScriptRoot/data/la-cost-scan-results.json",
+    [string] $LaProgressPath = "$PSScriptRoot/data/la-cost-scan-progress.json",
+    [string] $LaScanScript   = "$PSScriptRoot/scanners/Invoke-LogAnalyticsCostScan.ps1",
+    [string] $QuotaResultsPath  = "$PSScriptRoot/data/quota-scan-results.json",
+    [string] $QuotaProgressPath = "$PSScriptRoot/data/quota-scan-progress.json",
+    [string] $QuotaScanScript   = "$PSScriptRoot/scanners/Invoke-QuotaScan.ps1",
     [int]    $LookbackDays = 14,
     [int]    $ThrottleLimit = 8   # max resource groups scanned concurrently (1 = sequential)
 )
 
 Set-StrictMode -Version Latest
 
-# ── On-demand authentication (no auto sign-in, no stored credentials) ────────
-# We deliberately do NOT call Connect-AzAccount at startup. The user signs in on
-# demand from the dashboard (POST /api/auth/login) and out again (/api/auth/logout).
+# ── Authentication (terminal-driven, no stored credentials) ──────────────────
+# Sign in BEFORE launching: run Connect-AzAccount in this PowerShell session, then
+# start this script in the same session so it inherits the live context.
 #
 # Enable-AzContextAutosave -Scope Process keeps the context (and MSAL token cache)
 # in PROCESS MEMORY only — it is never written to the on-disk Az token cache, so no
 # credentials persist between server runs. It also lets the in-process ThreadJob
-# scans share the live context. Sign-out clears it; stopping the server discards it.
+# scans share the live context. Stopping the server discards it.
 $null = Enable-AzContextAutosave -Scope Process -ErrorAction SilentlyContinue
 
 $azContext = $null
@@ -61,7 +69,7 @@ try { $azContext = Get-AzContext -ErrorAction Stop } catch { $azContext = $null 
 if ($azContext -and $azContext.Account) {
     Write-Host "  Existing in-memory Azure session: $($azContext.Account.Id)" -ForegroundColor Gray
 } else {
-    Write-Host "  Not signed in — use the Sign in button on the dashboard." -ForegroundColor Yellow
+    Write-Host "  Not signed in — stop the server (Ctrl+C), run Connect-AzAccount, then re-run ./Start-Dashboard.ps1." -ForegroundColor Yellow
 }
 
 # ── Ensure ThreadJob is available ────────────────────────────────────────────
@@ -73,13 +81,16 @@ if (-not (Get-Command Start-ThreadJob -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
+# Ensure the runtime-artifact directory exists (it's gitignored, so a fresh clone may lack it).
+$null = New-Item -ItemType Directory -Path "$PSScriptRoot/data" -Force -ErrorAction SilentlyContinue
+
 $listener   = [System.Net.HttpListener]::new()
-$listener.Prefixes.Add("http://localhost:$Port/")
+$listener.Prefixes.Add("http://${BindAddress}:$Port/")
 $listener.Start()
 
 Write-Host ""
 Write-Host "  Azure Idle RG Dashboard" -ForegroundColor Cyan
-Write-Host "  Running at http://localhost:$Port" -ForegroundColor Green
+Write-Host "  Running at http://${BindAddress}:$Port" -ForegroundColor Green
 Write-Host "  Press Ctrl+C to stop." -ForegroundColor Gray
 Write-Host ""
 
@@ -96,6 +107,9 @@ $laScanStatus = @{ State = "idle"; StartedAt = $null; Message = "No scan run yet
 $quotaScanJob    = $null
 $quotaScanStatus = @{ State = "idle"; StartedAt = $null; Message = "No scan run yet." }
 $script:subscriptionCache = $null
+$script:mgCache           = $null   # management groups (tenant-wide); cached for the server's lifetime
+$script:rgCache           = @{}     # resource groups per subscription id; lazily filled
+$script:fileCache         = @{}     # path → @{ Mtime; Bytes } so unchanged pages/results aren't re-read from disk
 
 function Get-MimeType([string]$ext) {
     switch ($ext) {
@@ -108,18 +122,58 @@ function Get-MimeType([string]$ext) {
 }
 
 function Send-Response {
-    param($context, [int]$status = 200, [string]$body = "", [string]$contentType = "application/json; charset=utf-8")
-    $context.Response.StatusCode      = $status
-    $context.Response.ContentType     = $contentType
+    param($context, [int]$status = 200, [string]$body = "", [byte[]]$bytes = $null,
+          [string]$contentType = "application/json; charset=utf-8", [string]$etag = $null)
+    $resp = $context.Response
+    $resp.StatusCode  = $status
+    $resp.ContentType = $contentType
     # NOTE: deliberately NO "Access-Control-Allow-Origin" header. The dashboard is
     # served from this same origin, so it never needs CORS. Omitting it means the
     # browser's same-origin policy blocks any *other* website from reading our API
     # responses (which contain sensitive tenant data: user lists, role assignments).
-    $context.Response.Headers.Add("X-Content-Type-Options", "nosniff")
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-    $context.Response.ContentLength64 = $bytes.Length
-    $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
-    $context.Response.OutputStream.Close()
+    $resp.Headers.Add("X-Content-Type-Options", "nosniff")
+    if ($etag) { $resp.Headers.Add("ETag", $etag) }
+    if ($null -eq $bytes) { $bytes = [System.Text.Encoding]::UTF8.GetBytes($body) }
+    # Transparently gzip larger payloads when the client advertises it — the results JSON
+    # is multi-MB and compresses ~5-10x. Tiny responses (status polls) skip it.
+    $accept = $context.Request.Headers["Accept-Encoding"]
+    if ($bytes.Length -gt 1400 -and $accept -and $accept -match 'gzip') {
+        $resp.Headers.Add("Content-Encoding", "gzip")
+        $ms = [System.IO.MemoryStream]::new()
+        $gz = [System.IO.Compression.GZipStream]::new($ms, [System.IO.Compression.CompressionLevel]::Fastest)
+        $gz.Write($bytes, 0, $bytes.Length); $gz.Dispose()
+        $bytes = $ms.ToArray(); $ms.Dispose()
+    }
+    $resp.ContentLength64 = $bytes.Length
+    $resp.OutputStream.Write($bytes, 0, $bytes.Length)
+    $resp.OutputStream.Close()
+}
+
+# Serve a file (page or results JSON) with an in-memory cache + conditional GET.
+# A weak ETag derived from the file's last-write time + size lets browsers and the
+# tools' own re-polls skip the transfer entirely (304) when nothing changed; on a
+# miss the bytes are read once and cached until the file's mtime changes (so a new
+# scan result or an edited page is picked up automatically).
+function Send-CachedFile {
+    param($context, [string]$path, [string]$emptyBody = "{}", [string]$contentType = "application/json; charset=utf-8")
+    if (-not (Test-Path $path)) { Send-Response $context -body $emptyBody -contentType $contentType; return }
+    $fi   = Get-Item $path
+    $etag = '"{0:x}-{1:x}"' -f $fi.LastWriteTimeUtc.Ticks, $fi.Length
+    $inm  = $context.Request.Headers["If-None-Match"]
+    if ($inm -and $inm -eq $etag) {
+        $context.Response.StatusCode = 304
+        $context.Response.Headers.Add("ETag", $etag)
+        $context.Response.OutputStream.Close()
+        return
+    }
+    $entry = $script:fileCache[$path]
+    if ($entry -and $entry.Mtime -eq $fi.LastWriteTimeUtc.Ticks) {
+        $bytes = $entry.Bytes
+    } else {
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+        $script:fileCache[$path] = @{ Mtime = $fi.LastWriteTimeUtc.Ticks; Bytes = $bytes }
+    }
+    Send-Response $context -bytes $bytes -contentType $contentType -etag $etag
 }
 
 # ── Request-origin guards (CSRF + DNS-rebinding) ─────────────────────────────
@@ -128,8 +182,8 @@ function Send-Response {
 # that resolves to 127.0.0.1 (DNS rebinding). We defend with two checks:
 #   1. Host header must be exactly our localhost binding.
 #   2. State-changing requests (POST) must carry a same-origin Origin/Referer.
-$script:allowedHosts   = @("localhost:$Port", "127.0.0.1:$Port")
-$script:allowedOrigins = @("http://localhost:$Port", "http://127.0.0.1:$Port")
+$script:allowedHosts   = @("localhost:$Port", "127.0.0.1:$Port", "${BindAddress}:$Port") | Select-Object -Unique
+$script:allowedOrigins = @("http://localhost:$Port", "http://127.0.0.1:$Port", "http://${BindAddress}:$Port") | Select-Object -Unique
 
 function Test-AllowedHost {
     param($req)
@@ -155,6 +209,11 @@ function Test-SameOrigin {
 try {
     while ($listener.IsListening) {
         $context = $listener.GetContext()
+      # Per-request guard: a single malformed request or a client that disconnects
+      # mid-response (which disposes HttpListenerResponse) must NOT crash the accept
+      # loop. Any handler error is logged and the loop moves on. (Body kept at its
+      # original indentation to keep the diff readable.)
+      try {
         $req     = $context.Request
         $path    = $req.Url.LocalPath.TrimEnd("/")
 
@@ -190,10 +249,9 @@ try {
             "/home"             = "home.html"
         }
         if ($pageRoutes.ContainsKey($path)) {
-            $htmlPath = "$PSScriptRoot/$($pageRoutes[$path])"
+            $htmlPath = "$PSScriptRoot/web/$($pageRoutes[$path])"
             if (Test-Path $htmlPath) {
-                $html = Get-Content $htmlPath -Raw -Encoding UTF8
-                Send-Response $context -body $html -contentType "text/html; charset=utf-8"
+                Send-CachedFile $context -path $htmlPath -contentType "text/html; charset=utf-8"
             } else {
                 Send-Response $context -status 404 -body "{`"error`":`"$($pageRoutes[$path]) not found`"}"
             }
@@ -266,7 +324,10 @@ try {
         if ($path -eq "/api/auth/login" -and $req.HttpMethod -eq "POST") {
             try {
                 $ctx = (Connect-AzAccount -ErrorAction Stop).Context
-                $script:subscriptionCache = $null   # re-fetch subs for the new identity
+                # Re-auth may be a different principal — drop all identity-scoped caches.
+                $script:subscriptionCache = $null
+                $script:mgCache           = $null
+                $script:rgCache           = @{}
                 Send-Response $context -body (@{
                     authenticated = $true
                     account       = "$($ctx.Account.Id)"
@@ -294,14 +355,23 @@ try {
             continue
         }
 
+        # ── POST /api/shutdown ──────────────────────────────────────────────
+        # Stops the dashboard from the "Stop" button. Unlike /api/auth/logout this does
+        # NOT Disconnect-AzAccount: authentication now happens in the terminal via
+        # Connect-AzAccount before launch, so the Az session is left intact — stopping the
+        # listener returns control to that PowerShell session, still signed in, ready to
+        # re-run ./Start-Dashboard.ps1. The reply is sent first; stopping the listener ends
+        # the GetContext loop and runs the finally cleanup.
+        if ($path -eq "/api/shutdown" -and $req.HttpMethod -eq "POST") {
+            Send-Response $context -body '{"stopped":true}'
+            Write-Host "  Stop requested from the dashboard — shutting down server." -ForegroundColor Yellow
+            $listener.Stop()
+            continue
+        }
+
         # ── GET /api/results ────────────────────────────────────────────────
         if ($path -eq "/api/results" -and $req.HttpMethod -eq "GET") {
-            if (Test-Path $ResultsPath) {
-                $json = Get-Content $ResultsPath -Raw -Encoding UTF8
-                Send-Response $context -body $json
-            } else {
-                Send-Response $context -body '{"ScanMetadata":null,"ResourceGroups":[],"Errors":[]}'
-            }
+            Send-CachedFile $context -path $ResultsPath -emptyBody '{"ScanMetadata":null,"ResourceGroups":[],"Errors":[]}'
             continue
         }
 
@@ -324,6 +394,60 @@ try {
                 }
             }
             Send-Response $context -body (@{ subscriptions = $script:subscriptionCache } | ConvertTo-Json -Depth 5)
+            continue
+        }
+
+        # ── GET /api/managementgroups ───────────────────────────────────────
+        # Shared scope picker for every tool: lists the tenant's management groups
+        # (Name = the id passed to Search-AzGraph -ManagementGroup; DisplayName for
+        # the dropdown label). Cached; an empty list is non-fatal (tools fall back
+        # to whole-tenant / subscription scope).
+        if ($path -eq "/api/managementgroups" -and $req.HttpMethod -eq "GET") {
+            if ($null -eq $script:mgCache) {
+                try {
+                    $script:mgCache = @(
+                        Get-AzManagementGroup -ErrorAction Stop |
+                        Sort-Object DisplayName |
+                        ForEach-Object { @{ Name = $_.Name; DisplayName = $_.DisplayName } }
+                    )
+                } catch {
+                    Write-Warning "Failed to list management groups: $($_.Exception.Message)"
+                    $script:mgCache = @()
+                }
+            }
+            Send-Response $context -body (@{ managementGroups = $script:mgCache } | ConvertTo-Json -Depth 5)
+            continue
+        }
+
+        # ── GET /api/resourcegroups?subscriptionId=... ──────────────────────
+        # Shared scope picker: lists the resource groups in one subscription via
+        # Resource Graph so a tool can offer a cascading Subscription → RG target.
+        # Cached per subscription for the server's lifetime.
+        if ($path -eq "/api/resourcegroups" -and $req.HttpMethod -eq "GET") {
+            $subId = "$($req.QueryString["subscriptionId"])"
+            if (-not $subId) {
+                Send-Response $context -status 400 -body '{"error":"subscriptionId query parameter is required."}'
+                continue
+            }
+            if (-not $script:rgCache.ContainsKey($subId)) {
+                try {
+                    $kql = "ResourceContainers | where type =~ 'microsoft.resources/subscriptions/resourcegroups' | project name, location | order by name asc"
+                    # Page with SkipToken so subscriptions with >1000 resource groups aren't truncated.
+                    $rows = [System.Collections.Generic.List[object]]::new(); $skip = $null
+                    do {
+                        $page = if ($skip) { Search-AzGraph -Query $kql -Subscription $subId -First 1000 -SkipToken $skip -ErrorAction Stop }
+                                else        { Search-AzGraph -Query $kql -Subscription $subId -First 1000 -ErrorAction Stop }
+                        foreach ($r in $page) { $rows.Add($r) }
+                        $skip = if ($page.PSObject.Properties['SkipToken']) { $page.SkipToken } else { $null }
+                    } while ($skip)
+                    $script:rgCache[$subId] = @($rows | ForEach-Object { @{ Name = "$($_.name)"; Location = "$($_.location)" } })
+                } catch {
+                    Write-Warning "Failed to list resource groups for $subId : $($_.Exception.Message)"
+                    Send-Response $context -status 500 -body '{"error":"Failed to list resource groups. See server console for details."}'
+                    continue
+                }
+            }
+            Send-Response $context -body (@{ resourceGroups = $script:rgCache[$subId] } | ConvertTo-Json -Depth 5)
             continue
         }
 
@@ -371,10 +495,15 @@ try {
             }
             if ($scanJob) { Remove-Job $scanJob -Force; $scanJob = $null }
 
-            # Parse optional body: { "singleSubscriptionId": "...", "lookbackDays": 14 }
+            # Parse optional body: { "scopeType": "All|ManagementGroup|Subscription|ResourceGroup",
+            #   "managementGroupId": "...", "singleSubscriptionId": "...", "resourceGroup": "...",
+            #   "lookbackDays": 14 }
             # NOTE: Set-StrictMode throws on missing-property access, so we must check
             # property existence explicitly rather than relying on $null short-circuit.
+            $scopeType    = "All"
+            $mgId         = ""
             $singleSubId  = ""
+            $resourceGrp  = ""
             $effectiveDays = $LookbackDays
             try {
                 $bodyStream = New-Object System.IO.StreamReader($req.InputStream)
@@ -382,18 +511,20 @@ try {
                 if ($bodyText) {
                     $bodyObj = $bodyText | ConvertFrom-Json
                     $props   = $bodyObj.PSObject.Properties.Name
-                    if ($props -contains 'singleSubscriptionId' -and $bodyObj.singleSubscriptionId) {
-                        $singleSubId = [string]$bodyObj.singleSubscriptionId
-                    }
-                    if ($props -contains 'lookbackDays' -and $bodyObj.lookbackDays) {
-                        $effectiveDays = [int]$bodyObj.lookbackDays
-                    }
+                    if ($props -contains 'scopeType'            -and $bodyObj.scopeType)            { $scopeType   = [string]$bodyObj.scopeType }
+                    if ($props -contains 'managementGroupId'    -and $bodyObj.managementGroupId)    { $mgId        = [string]$bodyObj.managementGroupId }
+                    if ($props -contains 'singleSubscriptionId' -and $bodyObj.singleSubscriptionId) { $singleSubId = [string]$bodyObj.singleSubscriptionId }
+                    if ($props -contains 'resourceGroup'        -and $bodyObj.resourceGroup)        { $resourceGrp = [string]$bodyObj.resourceGroup }
+                    if ($props -contains 'lookbackDays'         -and $bodyObj.lookbackDays)         { $effectiveDays = [int]$bodyObj.lookbackDays }
                 }
             } catch {
                 Write-Warning "Failed to parse /api/scan body: $($_.Exception.Message)"
             }
 
-            $modeLabel = if ($singleSubId) { "single sub: $singleSubId" } else { "all subscriptions" }
+            $modeLabel = if ($scopeType -eq 'ManagementGroup' -and $mgId) { "mgmt group: $mgId" }
+                         elseif ($resourceGrp) { "RG: $resourceGrp" }
+                         elseif ($singleSubId) { "single sub: $singleSubId" }
+                         else { "all subscriptions" }
             $scanStatus = @{ State = "running"; StartedAt = (Get-Date -Format "o"); Message = "Scan started ($modeLabel, ${effectiveDays}d window)." }
 
             # Clear any stale progress from a previous run so the bar starts at 0.
@@ -401,13 +532,13 @@ try {
 
             # Start-ThreadJob runs in-process: inherits loaded Az modules + live context.
             $scanJob = Start-ThreadJob -ScriptBlock {
-                param($script, $output, $progress, $days, $subId, $throttle)
-                if ($subId) {
-                    & $script -OutputPath $output -ProgressPath $progress -LookbackDays $days -ThrottleLimit $throttle -SingleSubscriptionId $subId
-                } else {
-                    & $script -OutputPath $output -ProgressPath $progress -LookbackDays $days -ThrottleLimit $throttle
-                }
-            } -ArgumentList $ScanScript, $ResultsPath, $ProgressPath, $effectiveDays, $singleSubId, $ThrottleLimit
+                param($script, $output, $progress, $days, $scopeType, $mgId, $subId, $rg, $throttle)
+                $p = @{ OutputPath = $output; ProgressPath = $progress; LookbackDays = $days; ThrottleLimit = $throttle; ScopeType = $scopeType }
+                if ($mgId)   { $p['ManagementGroupId'] = $mgId }
+                if ($subId)  { $p['SingleSubscriptionId'] = $subId }
+                if ($rg)     { $p['ResourceGroup'] = $rg }
+                & $script @p
+            } -ArgumentList $ScanScript, $ResultsPath, $ProgressPath, $effectiveDays, $scopeType, $mgId, $singleSubId, $resourceGrp, $ThrottleLimit
 
             Send-Response $context -body ($scanStatus | ConvertTo-Json)
             continue
@@ -435,12 +566,7 @@ try {
 
         # ── GET /api/pa/results ─────────────────────────────────────────────
         if ($path -eq "/api/pa/results" -and $req.HttpMethod -eq "GET") {
-            if (Test-Path $PaResultsPath) {
-                $json = Get-Content $PaResultsPath -Raw -Encoding UTF8
-                Send-Response $context -body $json
-            } else {
-                Send-Response $context -body '{"ScanMetadata":null,"Assignments":[],"Errors":[]}'
-            }
+            Send-CachedFile $context -path $PaResultsPath -emptyBody '{"ScanMetadata":null,"Assignments":[],"Errors":[]}'
             continue
         }
 
@@ -478,7 +604,9 @@ try {
         }
 
         # ── POST /api/pa/scan ───────────────────────────────────────────────
-        # Body: { "singleSubscriptionId": "...", "privilegedRoles": ["Owner", ...] }
+        # Body: { "scopeType": "All|ManagementGroup|Subscription|ResourceGroup",
+        #   "managementGroupId": "...", "singleSubscriptionId": "...", "resourceGroup": "...",
+        #   "privilegedRoles": ["Owner", ...] }
         if ($path -eq "/api/pa/scan" -and $req.HttpMethod -eq "POST") {
             if ($paScanJob -and $paScanJob.State -eq "Running") {
                 Send-Response $context -status 409 -body '{"error":"Scan already running."}'
@@ -486,7 +614,7 @@ try {
             }
             if ($paScanJob) { Remove-Job $paScanJob -Force; $paScanJob = $null }
 
-            $singleSubId = ""
+            $scopeType = "All"; $mgId = ""; $singleSubId = ""; $resourceGrp = ""
             $roles = @('Owner','Contributor','User Access Administrator','Role Based Access Control Administrator')
             try {
                 $bodyStream = New-Object System.IO.StreamReader($req.InputStream)
@@ -494,30 +622,32 @@ try {
                 if ($bodyText) {
                     $bodyObj = $bodyText | ConvertFrom-Json
                     $props   = $bodyObj.PSObject.Properties.Name
-                    if ($props -contains 'singleSubscriptionId' -and $bodyObj.singleSubscriptionId) {
-                        $singleSubId = [string]$bodyObj.singleSubscriptionId
-                    }
-                    if ($props -contains 'privilegedRoles' -and $bodyObj.privilegedRoles) {
-                        $roles = @($bodyObj.privilegedRoles)
-                    }
+                    if ($props -contains 'scopeType'            -and $bodyObj.scopeType)            { $scopeType   = [string]$bodyObj.scopeType }
+                    if ($props -contains 'managementGroupId'    -and $bodyObj.managementGroupId)    { $mgId        = [string]$bodyObj.managementGroupId }
+                    if ($props -contains 'singleSubscriptionId' -and $bodyObj.singleSubscriptionId) { $singleSubId = [string]$bodyObj.singleSubscriptionId }
+                    if ($props -contains 'resourceGroup'        -and $bodyObj.resourceGroup)        { $resourceGrp = [string]$bodyObj.resourceGroup }
+                    if ($props -contains 'privilegedRoles'      -and $bodyObj.privilegedRoles)      { $roles       = @($bodyObj.privilegedRoles) }
                 }
             } catch {
                 Write-Warning "Failed to parse /api/pa/scan body: $($_.Exception.Message)"
             }
 
-            $modeLabel  = if ($singleSubId) { "single sub: $singleSubId" } else { "all subscriptions + MGs" }
+            $modeLabel = if ($scopeType -eq 'ManagementGroup' -and $mgId) { "mgmt group: $mgId" }
+                         elseif ($resourceGrp) { "RG: $resourceGrp" }
+                         elseif ($singleSubId) { "single sub: $singleSubId" }
+                         else { "all subscriptions + MGs" }
             $paScanStatus = @{ State = "running"; StartedAt = (Get-Date -Format "o"); Message = "Scan started ($modeLabel)." }
 
             if (Test-Path $PaProgressPath) { Remove-Item $PaProgressPath -Force -ErrorAction SilentlyContinue }
 
             $paScanJob = Start-ThreadJob -ScriptBlock {
-                param($script, $output, $progress, $subId, $roles, $throttle)
-                if ($subId) {
-                    & $script -OutputPath $output -ProgressPath $progress -PrivilegedRoles $roles -ThrottleLimit $throttle -SingleSubscriptionId $subId
-                } else {
-                    & $script -OutputPath $output -ProgressPath $progress -PrivilegedRoles $roles -ThrottleLimit $throttle
-                }
-            } -ArgumentList $PaScanScript, $PaResultsPath, $PaProgressPath, $singleSubId, $roles, $ThrottleLimit
+                param($script, $output, $progress, $scopeType, $mgId, $subId, $rg, $roles, $throttle)
+                $p = @{ OutputPath = $output; ProgressPath = $progress; PrivilegedRoles = $roles; ThrottleLimit = $throttle; ScopeType = $scopeType }
+                if ($mgId)  { $p['ManagementGroupId'] = $mgId }
+                if ($subId) { $p['SingleSubscriptionId'] = $subId }
+                if ($rg)    { $p['ResourceGroup'] = $rg }
+                & $script @p
+            } -ArgumentList $PaScanScript, $PaResultsPath, $PaProgressPath, $scopeType, $mgId, $singleSubId, $resourceGrp, $roles, $ThrottleLimit
 
             Send-Response $context -body ($paScanStatus | ConvertTo-Json)
             continue
@@ -542,12 +672,7 @@ try {
 
         # ── GET /api/entra/results ──────────────────────────────────────────
         if ($path -eq "/api/entra/results" -and $req.HttpMethod -eq "GET") {
-            if (Test-Path $EntraResultsPath) {
-                $json = Get-Content $EntraResultsPath -Raw -Encoding UTF8
-                Send-Response $context -body $json
-            } else {
-                Send-Response $context -body '{"ScanMetadata":null,"Users":[],"Errors":[]}'
-            }
+            Send-CachedFile $context -path $EntraResultsPath -emptyBody '{"ScanMetadata":null,"Users":[],"Errors":[]}'
             continue
         }
 
@@ -639,12 +764,7 @@ try {
 
         # ── GET /api/tags/results ───────────────────────────────────────────
         if ($path -eq "/api/tags/results" -and $req.HttpMethod -eq "GET") {
-            if (Test-Path $TagResultsPath) {
-                $json = Get-Content $TagResultsPath -Raw -Encoding UTF8
-                Send-Response $context -body $json
-            } else {
-                Send-Response $context -body '{"ScanMetadata":null,"Objects":[],"Errors":[]}'
-            }
+            Send-CachedFile $context -path $TagResultsPath -emptyBody '{"ScanMetadata":null,"Objects":[],"Errors":[]}'
             continue
         }
 
@@ -715,8 +835,10 @@ try {
 
             $requiredTags = @()
             $allowedValues = $null
+            $scopeType = "All"
             $singleSubId = ""
             $mgId = ""
+            $resourceGrp = ""
             $mode = "Exclusive"
             try {
                 $bodyStream = New-Object System.IO.StreamReader($req.InputStream)
@@ -730,11 +852,17 @@ try {
                     if ($props -contains 'allowedValues' -and $bodyObj.allowedValues) {
                         $allowedValues = $bodyObj.allowedValues
                     }
+                    if ($props -contains 'scopeType' -and $bodyObj.scopeType) {
+                        $scopeType = [string]$bodyObj.scopeType
+                    }
                     if ($props -contains 'singleSubscriptionId' -and $bodyObj.singleSubscriptionId) {
                         $singleSubId = [string]$bodyObj.singleSubscriptionId
                     }
                     if ($props -contains 'managementGroupId' -and $bodyObj.managementGroupId) {
                         $mgId = [string]$bodyObj.managementGroupId
+                    }
+                    if ($props -contains 'resourceGroup' -and $bodyObj.resourceGroup) {
+                        $resourceGrp = [string]$bodyObj.resourceGroup
                     }
                     if ($props -contains 'mode' -and $bodyObj.mode -eq 'Inclusive') {
                         $mode = "Inclusive"
@@ -749,17 +877,18 @@ try {
                 continue
             }
 
-            $scopeLabel = if ($mgId) { "mgmt group: $mgId" } elseif ($singleSubId) { "single sub: $singleSubId" } else { "all subscriptions" }
+            $scopeLabel = if ($mgId) { "mgmt group: $mgId" } elseif ($resourceGrp) { "RG: $resourceGrp" } elseif ($singleSubId) { "single sub: $singleSubId" } else { "all subscriptions" }
             $tagScanStatus = @{ State = "running"; StartedAt = (Get-Date -Format "o"); Message = "Scan started ($scopeLabel, $mode, $(@($requiredTags).Count) required tag(s))." }
             if (Test-Path $TagProgressPath) { Remove-Item $TagProgressPath -Force -ErrorAction SilentlyContinue }
 
             $tagScanJob = Start-ThreadJob -ScriptBlock {
-                param($script, $output, $progress, $required, $allowed, $subId, $mgId, $mode)
-                $p = @{ OutputPath = $output; ProgressPath = $progress; RequiredTags = $required; AllowedTagValues = $allowed; Mode = $mode }
+                param($script, $output, $progress, $required, $allowed, $scopeType, $subId, $mgId, $rg, $mode)
+                $p = @{ OutputPath = $output; ProgressPath = $progress; RequiredTags = $required; AllowedTagValues = $allowed; Mode = $mode; ScopeType = $scopeType }
                 if ($mgId)  { $p['ManagementGroupId'] = $mgId }
                 if ($subId) { $p['SingleSubscriptionId'] = $subId }
+                if ($rg)    { $p['ResourceGroup'] = $rg }
                 & $script @p
-            } -ArgumentList $TagScanScript, $TagResultsPath, $TagProgressPath, $requiredTags, $allowedValues, $singleSubId, $mgId, $mode
+            } -ArgumentList $TagScanScript, $TagResultsPath, $TagProgressPath, $requiredTags, $allowedValues, $scopeType, $singleSubId, $mgId, $resourceGrp, $mode
 
             Send-Response $context -body ($tagScanStatus | ConvertTo-Json)
             continue
@@ -794,7 +923,14 @@ try {
             }
             try {
                 $kql = "Resources | where type =~ 'microsoft.operationalinsights/workspaces' | project name, resourceGroup, location, customerId = tostring(properties.customerId), id | order by resourceGroup asc, name asc"
-                $rows = @(Search-AzGraph -Query $kql -Subscription $subId -First 1000 -ErrorAction Stop)
+                # Page with SkipToken so subscriptions with >1000 workspaces aren't truncated.
+                $rows = [System.Collections.Generic.List[object]]::new(); $skip = $null
+                do {
+                    $page = if ($skip) { Search-AzGraph -Query $kql -Subscription $subId -First 1000 -SkipToken $skip -ErrorAction Stop }
+                            else        { Search-AzGraph -Query $kql -Subscription $subId -First 1000 -ErrorAction Stop }
+                    foreach ($r in $page) { $rows.Add($r) }
+                    $skip = if ($page.PSObject.Properties['SkipToken']) { $page.SkipToken } else { $null }
+                } while ($skip)
                 $workspaces = @($rows | ForEach-Object {
                     @{ Name = "$($_.name)"; ResourceGroup = "$($_.resourceGroup)"; Location = "$($_.location)"; CustomerId = "$($_.customerId)"; Id = "$($_.id)" }
                 })
@@ -808,12 +944,7 @@ try {
 
         # ── GET /api/la/results ─────────────────────────────────────────────
         if ($path -eq "/api/la/results" -and $req.HttpMethod -eq "GET") {
-            if (Test-Path $LaResultsPath) {
-                $json = Get-Content $LaResultsPath -Raw -Encoding UTF8
-                Send-Response $context -body $json
-            } else {
-                Send-Response $context -body '{"ScanMetadata":null,"Tables":[],"Errors":[]}'
-            }
+            Send-CachedFile $context -path $LaResultsPath -emptyBody '{"ScanMetadata":null,"Tables":[],"Errors":[]}'
             continue
         }
 
@@ -913,12 +1044,7 @@ try {
 
         # ── GET /api/quota/results ──────────────────────────────────────────
         if ($path -eq "/api/quota/results" -and $req.HttpMethod -eq "GET") {
-            if (Test-Path $QuotaResultsPath) {
-                $json = Get-Content $QuotaResultsPath -Raw -Encoding UTF8
-                Send-Response $context -body $json
-            } else {
-                Send-Response $context -body '{"ScanMetadata":null,"Quotas":[],"Errors":[]}'
-            }
+            Send-CachedFile $context -path $QuotaResultsPath -emptyBody '{"ScanMetadata":null,"Quotas":[],"Errors":[]}'
             continue
         }
 
@@ -956,7 +1082,9 @@ try {
         }
 
         # ── POST /api/quota/scan ────────────────────────────────────────────
-        # Body (all optional): { "singleSubscriptionId": "...", "criticalThreshold": 90, "warningThreshold": 75 }
+        # Body (all optional): { "scopeType": "All|ManagementGroup|Subscription",
+        #   "managementGroupId": "...", "singleSubscriptionId": "...",
+        #   "criticalThreshold": 90, "warningThreshold": 75 }
         if ($path -eq "/api/quota/scan" -and $req.HttpMethod -eq "POST") {
             if ($quotaScanJob -and $quotaScanJob.State -eq "Running") {
                 Send-Response $context -status 409 -body '{"error":"Scan already running."}'
@@ -964,13 +1092,15 @@ try {
             }
             if ($quotaScanJob) { Remove-Job $quotaScanJob -Force; $quotaScanJob = $null }
 
-            $singleSub = ""; $critical = 90; $warning = 75
+            $scopeType = "All"; $mgId = ""; $singleSub = ""; $critical = 90; $warning = 75
             try {
                 $bodyStream = New-Object System.IO.StreamReader($req.InputStream)
                 $bodyText   = $bodyStream.ReadToEnd()
                 if ($bodyText) {
                     $bodyObj = $bodyText | ConvertFrom-Json
                     $props   = $bodyObj.PSObject.Properties.Name
+                    if ($props -contains 'scopeType'            -and $bodyObj.scopeType)            { $scopeType = [string]$bodyObj.scopeType }
+                    if ($props -contains 'managementGroupId'    -and $bodyObj.managementGroupId)    { $mgId      = [string]$bodyObj.managementGroupId }
                     if ($props -contains 'singleSubscriptionId' -and $bodyObj.singleSubscriptionId) { $singleSub = [string]$bodyObj.singleSubscriptionId }
                     if ($props -contains 'criticalThreshold'    -and $bodyObj.criticalThreshold)    { $critical  = [int]$bodyObj.criticalThreshold }
                     if ($props -contains 'warningThreshold'     -and $bodyObj.warningThreshold)     { $warning   = [int]$bodyObj.warningThreshold }
@@ -979,15 +1109,17 @@ try {
                 Write-Warning "Failed to parse /api/quota/scan body: $($_.Exception.Message)"
             }
 
-            $quotaScanStatus = @{ State = "running"; StartedAt = (Get-Date -Format "o"); Message = "Scanning subscription quotas." }
+            $scopeLabel = if ($scopeType -eq 'ManagementGroup' -and $mgId) { "mgmt group: $mgId" } elseif ($scopeType -eq 'Subscription' -and $singleSub) { "single sub: $singleSub" } else { "all subscriptions" }
+            $quotaScanStatus = @{ State = "running"; StartedAt = (Get-Date -Format "o"); Message = "Scanning quotas ($scopeLabel)." }
             if (Test-Path $QuotaProgressPath) { Remove-Item $QuotaProgressPath -Force -ErrorAction SilentlyContinue }
 
             $quotaScanJob = Start-ThreadJob -ScriptBlock {
-                param($script, $output, $progress, $singleSub, $critical, $warning)
-                $p = @{ OutputPath = $output; ProgressPath = $progress; CriticalThreshold = $critical; WarningThreshold = $warning }
+                param($script, $output, $progress, $scopeType, $mgId, $singleSub, $critical, $warning)
+                $p = @{ OutputPath = $output; ProgressPath = $progress; CriticalThreshold = $critical; WarningThreshold = $warning; ScopeType = $scopeType }
+                if ($mgId)      { $p['ManagementGroupId'] = $mgId }
                 if ($singleSub) { $p['SingleSubscriptionId'] = $singleSub }
                 & $script @p
-            } -ArgumentList $QuotaScanScript, $QuotaResultsPath, $QuotaProgressPath, $singleSub, $critical, $warning
+            } -ArgumentList $QuotaScanScript, $QuotaResultsPath, $QuotaProgressPath, $scopeType, $mgId, $singleSub, $critical, $warning
 
             Send-Response $context -body ($quotaScanStatus | ConvertTo-Json)
             continue
@@ -1010,6 +1142,10 @@ try {
 
         # ── 404 ─────────────────────────────────────────────────────────────
         Send-Response $context -status 404 -body '{"error":"Not found"}'
+      } catch {
+        Write-Warning "  Request handling error ($path): $($_.Exception.Message)"
+        try { $context.Response.Abort() } catch {}
+      }
     }
 } finally {
     $listener.Stop()

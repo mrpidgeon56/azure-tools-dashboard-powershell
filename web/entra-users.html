@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Quota Usage Scanner</title>
+<title>Entra User Scanner</title>
 <style>
   :root {
     --bg:        #0f1117;
@@ -16,9 +16,8 @@
     --danger:    #f06a6a;
     --warn:      #f5a623;
     --ok:        #52c78f;
-    --sub:       #b47fe8;
-    --rg:        #5bc0de;
-    --res:       #8892a4;
+    --member:    #b47fe8;
+    --guest:     #5bc0de;
     --radius:    8px;
     --font:      "Inter", "Segoe UI", system-ui, sans-serif;
   }
@@ -59,7 +58,6 @@
   }
   body.needs-data .empty { display: flex; }
   body.needs-data .has-data { display: none !important; }
-  body.needs-data .cards { display: none !important; }
   .empty .big { font-size: 46px; }
   .empty h2 { font-size: 20px; font-weight: 700; }
   .empty p { color: var(--muted); max-width: 480px; line-height: 1.5; }
@@ -74,7 +72,7 @@
   .scan-banner .phase { font-weight: 600; }
   .scan-banner .pct { color: var(--muted); font-variant-numeric: tabular-nums; }
   .bar { height: 7px; background: var(--surface2); border-radius: 999px; overflow: hidden; }
-  .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--sub)); transition: width .3s; }
+  .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--member)); transition: width .3s; }
   .scan-log { margin-top: 10px; font-size: 12px; color: var(--muted); font-family: ui-monospace, monospace; max-height: 86px; overflow-y: auto; line-height: 1.5; }
 
   /* ── cards ─────────────────────────────────────────────────── */
@@ -84,10 +82,9 @@
   .card-value { font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
   .card-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
   .card.flagged .card-value { color: var(--danger); }
+  .card.member .card-value { color: var(--member); }
+  .card.guest .card-value { color: var(--guest); }
   .card.warn .card-value { color: var(--warn); }
-  .card.sub .card-value { color: var(--sub); }
-  .card.rg .card-value { color: var(--rg); }
-  .card.ok .card-value { color: var(--ok); }
 
   /* ── heatmap ───────────────────────────────────────────────── */
   .heatmap-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 22px; }
@@ -111,13 +108,38 @@
     border: 1px solid var(--border); border-radius: 6px; padding: 7px 11px;
   }
   .toolbar input[type="text"] { min-width: 240px; flex: 1; }
+  .search-wrap { position: relative; flex: 1; min-width: 220px; max-width: 380px; }
+  .toolbar .search-wrap input { width: 100%; flex: none; min-width: 0; padding: 7px 11px 7px 34px; }
+  .search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; font-size: 13px; }
   .toolbar input::placeholder { color: var(--muted); }
   .toolbar .toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
   .toolbar .spacer { flex: 1; }
 
-  .filter-summary { font-size: 12px; color: var(--muted); }
+  /* ── toast ─────────────────────────────────────────────────── */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--surface2); border: 1px solid var(--border);
+    padding: 10px 20px; border-radius: 8px; font-size: 13px;
+    opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; z-index: 200;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .filter-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 2px 0 14px; font-size: 12px; color: var(--muted); min-height: 18px; }
+  .filter-summary .clear-filters { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+  .filter-summary .clear-filters:hover { text-decoration: underline; }
   .col-btn.export-btn { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
   .col-btn.export-btn:hover { background: #3f6fe0; }
+
+  /* ── settings popover ──────────────────────────────────────── */
+  .pop { position: absolute; top: 44px; right: 0; width: 320px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; z-index: 60; box-shadow: 0 12px 40px rgba(0,0,0,.5); display: none; }
+  .pop.open { display: block; }
+  .pop h4 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+  .pop .field { margin-bottom: 14px; }
+  .pop label.lbl { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .pop input[type="number"] { width: 100%; background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-family: var(--font); font-size: 13px; }
+  .pop .checks { display: flex; flex-direction: column; gap: 7px; }
+  .pop .checks label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+  .pop .pop-foot { display: flex; gap: 8px; margin-top: 4px; }
+  .pop .pop-foot button { flex: 1; }
 
   /* ── table ─────────────────────────────────────────────────── */
   .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
@@ -127,31 +149,22 @@
   th .sort-indicator { color: var(--accent); margin-left: 4px; }
   tbody tr { cursor: pointer; transition: background .1s; }
   tbody tr:hover { background: var(--surface2); }
-  td .status-pill {
+  td .type-pill, td .pw-pill, td .id-pill {
     display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
     border: 1px solid var(--border);
   }
-  .status-pill.Critical { color: var(--danger); border-color: var(--danger); }
-  .status-pill.Warning { color: var(--warn); border-color: var(--warn); }
-  .status-pill.OK { color: var(--ok); border-color: var(--ok); }
-  .prov-pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
-  .prov-pill.Compute { color: var(--sub); border-color: var(--sub); }
-  .prov-pill.Network { color: var(--rg); border-color: var(--rg); }
-  .prov-pill.Storage { color: var(--accent); border-color: var(--accent); }
+  .type-pill.Member { color: var(--member); border-color: var(--member); }
+  .type-pill.Guest { color: var(--guest); border-color: var(--guest); }
+  .id-pill.User { color: var(--member); border-color: var(--member); }
+  .id-pill.Principal { color: var(--warn); border-color: var(--warn); }
+  .pw-pill.Expired { color: var(--danger); border-color: var(--danger); }
+  .pw-pill.Active { color: var(--ok); border-color: var(--ok); }
+  .disabled-flag { font-size: 11px; color: var(--muted); }
+  .orphan-flag { color: var(--danger); font-weight: 600; }
+  .stale { color: var(--warn); }
   .principal-name { font-weight: 500; }
   .principal-upn { font-size: 11px; color: var(--muted); }
   .empty-rows { text-align: center; color: var(--muted); padding: 40px; }
-
-  /* ── usage bar (inline in table cell) ──────────────────────── */
-  .usage-cell { min-width: 160px; }
-  .usage-meta { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px; }
-  .usage-meta .pct { font-weight: 700; font-variant-numeric: tabular-nums; }
-  .usage-meta .frac { color: var(--muted); }
-  .ubar { height: 6px; background: var(--surface2); border-radius: 999px; overflow: hidden; }
-  .ubar > i { display: block; height: 100%; border-radius: 999px; }
-  .ubar > i.Critical { background: var(--danger); }
-  .ubar > i.Warning { background: var(--warn); }
-  .ubar > i.OK { background: var(--ok); }
 
   /* ── pager ─────────────────────────────────────────────────── */
   .pager { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; }
@@ -175,7 +188,7 @@
   }
 
   .col-filter-pop {
-    position: absolute; z-index: 200; min-width: 190px; max-width: 320px;
+    position: absolute; z-index: 200; min-width: 190px; max-width: 280px;
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 8px; padding: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.45);
   }
@@ -205,7 +218,7 @@
   /* ── detail panel ──────────────────────────────────────────── */
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 90; display: none; }
   .overlay.open { display: block; }
-  .detail { position: fixed; top: 0; right: 0; height: 100%; width: 460px; max-width: 92vw; background: var(--surface); border-left: 1px solid var(--border); z-index: 100; transform: translateX(100%); transition: transform .2s; overflow-y: auto; }
+  .detail { position: fixed; top: 0; right: 0; height: 100%; width: 440px; max-width: 92vw; background: var(--surface); border-left: 1px solid var(--border); z-index: 100; transform: translateX(100%); transition: transform .2s; overflow-y: auto; }
   .detail.open { transform: translateX(0); }
   .detail .dhead { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
   .detail .dhead h3 { font-size: 15px; font-weight: 600; }
@@ -217,6 +230,7 @@
   .rec-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
   .rec-box .ra { font-weight: 600; margin-bottom: 4px; }
   .rec-box .rr { font-size: 13px; color: var(--muted); line-height: 1.4; }
+  .note { font-size: 12px; color: var(--warn); margin-bottom: 16px; }
 
   /* ── light theme (toggled via .light on <html>) ──────────────── */
   html.light {
@@ -251,26 +265,48 @@
 <body class="needs-data">
 
 <header>
-  <span class="logo">📊</span>
+  <span class="logo">👤</span>
   <div>
-    <div class="crumbs"><a href="/">Azure Engineering</a> › Quota Usage Scanner</div>
-    <h1>Quota Usage Scanner</h1>
+    <div class="crumbs"><a href="/">Azure Engineering</a> › Entra User Scanner</div>
+    <h1>Entra User Scanner</h1>
   </div>
   <div class="header-actions">
     <button id="refreshBtn" class="ghost" onclick="loadResults(true)" title="Reload last scan">↻</button>
+    <button id="settingsBtn" class="ghost" onclick="toggleScanPop()">⚙ Scan settings</button>
     <button id="scanBtn" class="primary" onclick="startScan()">Run Scan</button>
     <button id="cancelBtn" class="ghost" onclick="cancelScan()" style="display:none;">Cancel</button>
+
+    <!-- scan settings popover -->
+    <div class="pop" id="scanPop">
+      <div class="field">
+        <label class="lbl">Stale sign-in threshold (days)</label>
+        <input type="number" id="staleDays" value="180" min="1" max="3650" />
+      </div>
+      <div class="field">
+        <label class="lbl">Password validity window (days)</label>
+        <input type="number" id="pwDays" value="90" min="1" max="3650" />
+      </div>
+      <div class="field">
+        <div class="checks">
+          <label><input type="checkbox" id="includeDisabled" checked> Include disabled accounts</label>
+        </div>
+      </div>
+      <div class="pop-foot">
+        <button class="ghost" onclick="toggleScanPop()">Close</button>
+        <button class="primary" onclick="startScan()">Run Scan</button>
+      </div>
+    </div>
   </div>
 </header>
 
 <main>
   <!-- empty state -->
   <div class="empty">
-    <div class="big">📊</div>
-    <h2>No quota scan yet</h2>
-    <p>Scan every subscription in your tenant for Compute, Network, and Storage quota usage.
-       The scanner only checks the regions each subscription actually uses, surfaces the quotas
-       closest to their ceiling, and recommends an action for each. Run a scan to get started.</p>
+    <div class="big">👤</div>
+    <h2>No Entra user scan yet</h2>
+    <p>Scan your Microsoft Entra ID tenant for stale and orphaned user accounts — members who
+       haven't signed in for months, expired passwords, and unused guest invitations.
+       Adjust thresholds in <b>⚙ Scan settings</b>, then run a scan.</p>
     <button class="primary" onclick="startScan()">Run your first scan</button>
   </div>
 
@@ -284,32 +320,42 @@
     <div class="scan-log" id="scanLog"></div>
   </div>
 
-  <!-- summary cards (hidden until a scan completes) -->
-  <div class="cards">
-    <div class="card"><div class="card-label">Active Quotas</div><div class="card-value" id="cTotal">—</div><div class="card-sub" id="cTotalSub"></div></div>
-    <div class="card sub"><div class="card-label">Subscriptions</div><div class="card-value" id="cSubs">—</div><div class="card-sub">scanned</div></div>
-    <div class="card rg"><div class="card-label">Regions</div><div class="card-value" id="cRegions">—</div><div class="card-sub">in use</div></div>
-    <div class="card flagged"><div class="card-label">Critical</div><div class="card-value" id="cCritical">—</div><div class="card-sub" id="cCriticalSub"></div></div>
-    <div class="card warn"><div class="card-label">Warning</div><div class="card-value" id="cWarning">—</div><div class="card-sub" id="cWarningSub"></div></div>
-    <div class="card ok"><div class="card-label">Within Limits</div><div class="card-value" id="cOk">—</div><div class="card-sub">OK</div></div>
-  </div>
-
   <div class="has-data">
-    <!-- heatmap (critical quotas, by provider) -->
+    <!-- sign-in availability note -->
+    <div class="note" id="siaNote" hidden>⚠ Sign-in activity was unavailable for this scan (requires Entra ID P1 + AuditLog.Read.All). Staleness is based on account creation date instead.</div>
+
+    <!-- summary cards -->
+    <div class="cards">
+      <div class="card"><div class="card-label">Total Users</div><div class="card-value" id="cTotal">—</div><div class="card-sub" id="cTotalSub"></div></div>
+      <div class="card member"><div class="card-label">Members</div><div class="card-value" id="cMembers">—</div><div class="card-sub">password accounts</div></div>
+      <div class="card guest"><div class="card-label">Guests</div><div class="card-value" id="cGuests">—</div><div class="card-sub">B2B invited</div></div>
+      <div class="card warn"><div class="card-label">Stale Sign-in</div><div class="card-value" id="cStale">—</div><div class="card-sub" id="cStaleSub">no recent login</div></div>
+      <div class="card flagged"><div class="card-label">Expired Passwords</div><div class="card-value" id="cExpired">—</div><div class="card-sub">members</div></div>
+      <div class="card flagged"><div class="card-label">Orphaned</div><div class="card-value" id="cOrphan">—</div><div class="card-sub">expired or stale</div></div>
+    </div>
+
+    <!-- heatmap (account-health categories) -->
     <div class="heatmap-wrap" id="heatmapWrap" hidden>
-      <h3>Critical quotas by provider</h3>
-      <div class="hint">One tile per provider, sized by how many of its quotas are critical. Click a tile to filter the table to that provider.</div>
+      <h3>Account health</h3>
+      <div class="hint">Accounts grouped by risk signal. Click a tile to filter the table.</div>
       <div class="heatmap" id="heatmap"></div>
     </div>
 
     <!-- toolbar -->
     <div class="toolbar">
-      <input type="text" id="search" placeholder="Search quota, subscription, region, provider…" oninput="onFilterChange()" />
-      <label class="toggle"><input type="checkbox" id="atRiskOnly" onchange="onFilterChange()"> <span>At-risk only</span></label>
-      <span class="spacer"></span>
-      <span class="filter-summary" id="filterSummary"></span>
-      <button class="ghost" id="clearBtn" onclick="clearFilters()" style="display:none;">Clear</button>
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search" placeholder="Search name, UPN, type…" oninput="onSearchInput()" />
+      </div>
+      <label class="toggle"><input type="checkbox" id="orphanedOnly" onchange="onFilterChange()"> Orphaned only</label>
+      <button type="button" class="col-btn" id="copyCmdBtn" onclick="copyDisableCommands()" title="Copy Azure CLI commands to disable (block sign-in for) the orphaned accounts currently shown.">⧉ Copy disable cmds</button>
       <button class="col-btn export-btn" onclick="exportCsv()" id="exportBtn">⬇ Export CSV</button>
+    </div>
+
+    <!-- Active-filter summary + clear (own line, below toolbar) -->
+    <div class="filter-summary">
+      <span id="filterSummary"></span>
+      <button class="ghost clear-filters" id="clearBtn" onclick="clearFilters()" style="display:none;">Clear</button>
     </div>
 
     <!-- table -->
@@ -317,12 +363,13 @@
       <table>
         <thead>
           <tr>
-            <th data-col="quota" onclick="sortBy('QuotaName')">Quota</th>
-            <th data-col="subscription" onclick="sortBy('SubscriptionName')">Subscription</th>
-            <th data-col="region" onclick="sortBy('Region')">Region</th>
-            <th data-col="provider" onclick="sortBy('Provider')">Provider</th>
-            <th data-col="usage" onclick="sortBy('UsagePercent')">Usage</th>
-            <th data-col="severity" onclick="sortBy('UsagePercent')">Severity</th>
+            <th data-col="DisplayName" onclick="sortBy('DisplayName')">User</th>
+            <th data-col="identityType" onclick="sortBy('IdentityType')">Identity</th>
+            <th data-col="UserType" onclick="sortBy('UserType')">Type</th>
+            <th data-col="accountStatus" onclick="sortBy('AccountEnabled')">Account</th>
+            <th data-col="lastSignIn" onclick="sortBy('LastSignIn')">Last Sign-in</th>
+            <th data-col="passwordStatus" onclick="sortBy('PasswordStatus')">Password</th>
+            <th data-col="status" onclick="sortBy('IsOrphaned')">Status</th>
             <th data-col="recommendation" onclick="sortBy('RecommendedAction')">Recommendation</th>
           </tr>
         </thead>
@@ -340,7 +387,7 @@
 <div class="overlay" id="overlay" onclick="closeDetail()"></div>
 <aside class="detail" id="detail">
   <div class="dhead">
-    <h3 id="dTitle">Quota</h3>
+    <h3 id="dTitle">User</h3>
     <div class="dnav">
       <button class="ghost" onclick="navDetail(-1)" title="Previous (←)">‹</button>
       <button class="ghost" onclick="navDetail(1)" title="Next (→)">›</button>
@@ -352,52 +399,79 @@
 
 <script>
 /* ── state ──────────────────────────────────────────────────── */
-let allData = [];        // all quota rows
+let allData = [];        // all user rows
 let meta = null;
-let sortKey = 'UsagePercent', sortDir = -1;
-let heatFilter = null;   // { provider: 'Compute'|'Network'|'Storage' }
+let sortKey = 'DisplayName', sortDir = 1;
+let heatFilter = null;   // { value: category key }
 let currentPage = 1, pageSize = 12;
 let detailRows = [], detailIndex = -1;
 let pollTimer = null;
+let searchTimer = null;      // debounce timer for the search input
+let filteredCache = null;    // memoized getFilteredRows() result; null = stale
 
 const COLS = [
-  { key: 'QuotaName',         label: 'Quota' },
-  { key: 'SubscriptionName',  label: 'Subscription' },
-  { key: 'Region',            label: 'Region' },
-  { key: 'Provider',          label: 'Provider' },
-  { key: 'UsagePercent',      label: 'Usage' },
-  { key: 'Severity',          label: 'Severity' },
+  { key: 'DisplayName',       label: 'User' },
+  { key: 'IdentityType',      label: 'Identity' },
+  { key: 'UserType',          label: 'Type' },
+  { key: 'AccountEnabled',    label: 'Account' },
+  { key: 'LastSignIn',        label: 'Last Sign-in' },
+  { key: 'PasswordStatus',    label: 'Password' },
+  { key: 'IsOrphaned',        label: 'Status' },
   { key: 'RecommendedAction', label: 'Recommendation' },
 ];
 
 /* Per-column header filters, keyed by the th's data-col. `options` lists [value,label]
-   choices; `dynamic` derives choices from the data. `accessor` maps a row to the value
-   to match. Each filter is multi-select. */
+   choices; `dynamic` derives choices from the data. `valueOf` maps a row to the value
+   to match; `match` is a custom predicate for range filters. Each filter is multi-select. */
 const COL_FILTERS = {
-  subscription: {
+  identityType: {
+    options: [['User', 'Users'], ['Principal', 'Service principals']],
+    accessor: r => r.IdentityType || 'User',
+  },
+  UserType: {
+    options: [['Member', 'Members (password)'], ['Guest', 'Guests']],
+    accessor: r => r.UserType,
+  },
+  accountStatus: {
+    options: [['Enabled', 'Enabled'], ['Disabled', 'Disabled']],
+    accessor: r => r.AccountEnabled ? 'Enabled' : 'Disabled',
+  },
+  lastSignIn: {
+    options: [
+      ['30', 'No sign-in ≥ 30 days'], ['90', 'No sign-in ≥ 90 days'],
+      ['180', 'No sign-in ≥ 180 days'], ['365', 'No sign-in ≥ 365 days'],
+      ['never', 'Never signed in'],
+    ],
+    match: (r, vals) => vals.some(v => signInBucketMatch(r, v)),
+  },
+  passwordStatus: {
     dynamic: true,
-    accessor: r => r.SubscriptionName || '',
+    accessor: r => r.PasswordStatus || '',
   },
-  region: {
+  status: {
+    options: [['orphaned', '⚠ Orphaned'], ['ok', '✓ OK']],
+    accessor: r => r.IsOrphaned ? 'orphaned' : 'ok',
+  },
+  recommendation: {
     dynamic: true,
-    accessor: r => r.Region || '',
-  },
-  provider: {
-    options: [['Compute', 'Compute'], ['Network', 'Network'], ['Storage', 'Storage']],
-    accessor: r => r.Provider,
-  },
-  severity: {
-    options: [['Critical', '⛔ Critical'], ['Warning', '⚠ Warning'], ['OK', '✓ Within limits']],
-    accessor: r => r.Severity,
+    accessor: r => r.RecommendedAction?.Action || '',
   },
 };
 let colFilters = {};
+
+function signInBucketMatch(r, v) {
+  if (v === 'never') return !!r.NeverSignedIn;
+  const d = r.DaysSinceLastSignIn;
+  if (d == null) return false;
+  return d >= parseInt(v, 10);   // no sign-in for ≥ N days
+}
 
 /* Toggle one value within a column's multi-select filter. */
 function toggleColValue(key, value, checked) {
   const set = new Set(colFilters[key] || []);
   if (checked) set.add(value); else set.delete(value);
   if (set.size) colFilters[key] = [...set]; else delete colFilters[key];
+  filteredCache = null;
   currentPage = 1;
   setupColFilterIcons();
   renderTable();
@@ -405,6 +479,7 @@ function toggleColValue(key, value, checked) {
 
 function clearColFilter(key) {
   delete colFilters[key];
+  filteredCache = null;
   currentPage = 1;
   closeColFilter();
   renderTable();
@@ -487,10 +562,27 @@ function asArray(v) { return Array.isArray(v) ? v : (v == null ? [] : [v]); }
 /* ── init ───────────────────────────────────────────────────── */
 loadResults(false);
 
+/* ── settings popover ───────────────────────────────────────── */
+function toggleScanPop() { document.getElementById('scanPop').classList.toggle('open'); }
+document.addEventListener('click', e => {
+  const pop = document.getElementById('scanPop');
+  if (pop.classList.contains('open') &&
+      !pop.contains(e.target) &&
+      e.target.id !== 'settingsBtn') {
+    pop.classList.remove('open');
+  }
+});
+
 /* ── scan lifecycle ─────────────────────────────────────────── */
 async function startScan() {
+  document.getElementById('scanPop').classList.remove('open');
+  const body = {
+    staleDays: parseInt(document.getElementById('staleDays').value, 10) || 180,
+    passwordValidityDays: parseInt(document.getElementById('pwDays').value, 10) || 90,
+    includeDisabled: document.getElementById('includeDisabled').checked,
+  };
   try {
-    const r = await fetch('/api/quota/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const r = await fetch('/api/entra/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (r.status === 409) { alert('A scan is already running.'); return; }
     setScanning(true);
     pollStatus();
@@ -498,7 +590,7 @@ async function startScan() {
 }
 
 async function cancelScan() {
-  try { await fetch('/api/quota/scan/cancel', { method: 'POST' }); } catch {}
+  try { await fetch('/api/entra/scan/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch {}
 }
 
 function setScanning(on) {
@@ -510,7 +602,7 @@ function setScanning(on) {
 async function pollStatus() {
   if (pollTimer) clearTimeout(pollTimer);
   try {
-    const r = await fetch('/api/quota/status');
+    const r = await fetch('/api/entra/status');
     const s = await r.json();
     const prog = s.Progress;
     if (prog) {
@@ -542,7 +634,7 @@ async function pollStatus() {
 /* ── load + render ──────────────────────────────────────────── */
 async function loadResults(userInitiated) {
   try {
-    const r = await fetch('/api/quota/results');
+    const r = await fetch('/api/entra/results');
     if (!r.ok) return;
     const json = await r.json();
     applyData(json);
@@ -551,12 +643,23 @@ async function loadResults(userInitiated) {
 
 function applyData(json) {
   meta = json.ScanMetadata || null;
-  allData = asArray(json.Quotas);
+  allData = asArray(json.Users);
+  filteredCache = null;
+  // Precompute a lowercase search haystack per row (same fields the search concatenates),
+  // so getFilteredRows() does a cheap r._hay.includes(q) instead of rebuilding+lowercasing.
+  allData.forEach(r => {
+    r._hay = [r.DisplayName, r.UserPrincipalName, r.UserType, r.IdentityType].join(' ').toLowerCase();
+  });
   if (!meta || !allData.length) {
     document.body.classList.add('needs-data');
     return;
   }
   document.body.classList.remove('needs-data');
+
+  // restore scan-setting inputs to what was actually scanned
+  if (meta.StaleDays) document.getElementById('staleDays').value = meta.StaleDays;
+  if (meta.PasswordValidityDays) document.getElementById('pwDays').value = meta.PasswordValidityDays;
+  document.getElementById('siaNote').hidden = (meta.SignInActivityAvailable !== false);
 
   setupColFilterIcons();
   updateCards();
@@ -566,51 +669,53 @@ function applyData(json) {
 }
 
 function updateCards() {
-  document.getElementById('cTotal').textContent    = meta.TotalQuotas ?? allData.length;
-  document.getElementById('cSubs').textContent     = meta.Subscriptions ?? '—';
-  document.getElementById('cRegions').textContent  = meta.Regions ?? '—';
-  document.getElementById('cCritical').textContent = meta.CriticalCount ?? '—';
-  document.getElementById('cWarning').textContent  = meta.WarningCount ?? '—';
-  document.getElementById('cOk').textContent       = meta.OkCount ?? '—';
-  document.getElementById('cCriticalSub').textContent = `≥ ${meta.CriticalThreshold ?? 90}% of limit`;
-  document.getElementById('cWarningSub').textContent  = `≥ ${meta.WarningThreshold ?? 75}% of limit`;
+  document.getElementById('cTotal').textContent   = meta.TotalUsers ?? allData.length;
+  document.getElementById('cMembers').textContent = meta.MemberUsers ?? '—';
+  document.getElementById('cGuests').textContent  = meta.GuestUsers ?? '—';
+  document.getElementById('cStale').textContent   = meta.StaleUsers ?? '—';
+  document.getElementById('cExpired').textContent = meta.ExpiredPasswordUsers ?? '—';
+  document.getElementById('cOrphan').textContent  = meta.OrphanedUsers ?? '—';
   const when = meta.ScanTime ? new Date(meta.ScanTime) : null;
   document.getElementById('cTotalSub').textContent = when ? when.toLocaleString() : '';
+  document.getElementById('cStaleSub').textContent = `no login ≥ ${meta.StaleDays ?? 180}d`;
 }
 
-/* heatmap: one tile per provider; redness scales with how many of that provider's
-   quotas are critical (relative to the busiest provider). Clicking a tile filters
-   the table to that provider. */
-const HEAT_PROVIDERS = ['Compute', 'Network', 'Storage'];
+/* heatmap: account-health risk categories. Each tile is a named predicate so it can
+   be reused both to count (tile value) and to filter the table (heatFilter). The
+   categories are intentionally distinct: "inactive" excludes never-signed-in accounts
+   (those get their own tile) so the three don't double-count the same rows. */
+const HEAT_CATEGORIES = [
+  { key: 'never',    label: 'Never logged in',     meta: 'no sign-in on record',     match: r => r.NeverSignedIn },
+  { key: 'expired',  label: 'Expired credentials', meta: 'password past expiry',      match: r => r.PasswordExpired },
+  { key: 'inactive', label: 'Inactive accounts',   meta: 'no recent sign-in',         match: r => r.StaleByLogin && !r.NeverSignedIn },
+];
+function heatCategory(key) { return HEAT_CATEGORIES.find(c => c.key === key); }
 
 function buildHeatmap() {
-  const provs = {};   // provider -> { total, critical, warning }
-  HEAT_PROVIDERS.forEach(p => { provs[p] = { total: 0, critical: 0, warning: 0 }; });
-  allData.forEach(r => {
-    const p = r.Provider;
-    if (!(p in provs)) provs[p] = { total: 0, critical: 0, warning: 0 };
-    provs[p].total++;
-    if (r.Severity === 'Critical') provs[p].critical++;
-    else if (r.Severity === 'Warning') provs[p].warning++;
-  });
-  const entries = Object.entries(provs).filter(([, s]) => s.total > 0);
-  const maxCrit = Math.max(1, ...entries.map(([, s]) => s.critical));
+  const counts = {};
+  HEAT_CATEGORIES.forEach(c => counts[c.key] = 0);
+  allData.forEach(r => HEAT_CATEGORIES.forEach(c => { if (c.match(r)) counts[c.key]++; }));
+  const total = allData.length || 1;
+  const max = Math.max(1, ...HEAT_CATEGORIES.map(c => counts[c.key]));
   const wrap = document.getElementById('heatmapWrap');
   wrap.hidden = false;
-  document.getElementById('heatmap').innerHTML = entries.map(([prov, s]) => {
-    const intensity = 0.10 + 0.60 * (s.critical / maxCrit);
-    const active = heatFilter && heatFilter.provider === prov ? ' active' : '';
+  document.getElementById('heatmap').innerHTML = HEAT_CATEGORIES.map(c => {
+    const n = counts[c.key];
+    const intensity = 0.12 + 0.55 * (n / max);
+    const active = heatFilter && heatFilter.value === c.key ? ' active' : '';
+    const pct = Math.round((n / total) * 100);
     return `<div class="heat-cell${active}" style="background:rgba(240,106,106,${intensity.toFixed(2)})"
-                 onclick="toggleHeat('${esc(prov)}')">
-      <div class="hc-name" title="${esc(prov)}">${esc(prov)}</div>
-      <div class="hc-count">${s.critical}</div>
-      <div class="hc-meta">critical · ${s.warning} warning · ${s.total} quotas</div>
+                 onclick="toggleHeat('${c.key}')">
+      <div class="hc-name" title="${esc(c.label)}">${esc(c.label)}</div>
+      <div class="hc-count">${n}</div>
+      <div class="hc-meta">${pct}% · ${esc(c.meta)}</div>
     </div>`;
   }).join('');
 }
 
-function toggleHeat(provider) {
-  heatFilter = (heatFilter && heatFilter.provider === provider) ? null : { provider };
+function toggleHeat(key) {
+  heatFilter = (heatFilter && heatFilter.value === key) ? null : { value: key };
+  filteredCache = null;
   currentPage = 1;
   buildHeatmap();
   renderTable();
@@ -618,48 +723,63 @@ function toggleHeat(provider) {
 
 /* ── filtering ──────────────────────────────────────────────── */
 function getFilteredRows() {
+  if (filteredCache) return filteredCache;
   const q = document.getElementById('search').value.trim().toLowerCase();
-  const atRiskOnly = document.getElementById('atRiskOnly').checked;
+  const orphanOnly = document.getElementById('orphanedOnly').checked;
   const colEntries = Object.entries(colFilters).filter(([, v]) => v && v.length);
 
   let rows = allData.filter(r => {
-    if (atRiskOnly && r.Severity === 'OK') return false;
-    if (heatFilter && r.Provider !== heatFilter.provider) return false;
+    if (orphanOnly && !r.IsOrphaned) return false;
+    if (heatFilter) { const cat = heatCategory(heatFilter.value); if (cat && !cat.match(r)) return false; }
     for (const [key, vals] of colEntries) {
       const f = COL_FILTERS[key];
       if (f.match ? !f.match(r, vals) : !vals.includes(f.accessor(r))) return false;
     }
-    if (q) {
-      const hay = [r.QuotaName, r.QuotaKey, r.Provider, r.SubscriptionName, r.Region].join(' ').toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
+    if (q && !(r._hay || '').includes(q)) return false;
     return true;
   });
 
   rows.sort((a, b) => {
     let av = a[sortKey], bv = b[sortKey];
     if (sortKey === 'RecommendedAction') { av = a.RecommendedAction?.Action; bv = b.RecommendedAction?.Action; }
-    if (sortKey === 'UsagePercent') { return (Number(av) - Number(bv)) * sortDir; }
+    if (sortKey === 'LastSignIn') {
+      av = a.LastSignIn ? new Date(a.LastSignIn).getTime() : -1;
+      bv = b.LastSignIn ? new Date(b.LastSignIn).getTime() : -1;
+      return av < bv ? -sortDir : av > bv ? sortDir : 0;
+    }
+    if (sortKey === 'IsOrphaned' || sortKey === 'AccountEnabled') {
+      av = av ? 1 : 0; bv = bv ? 1 : 0;
+      return av < bv ? -sortDir : av > bv ? sortDir : 0;
+    }
     av = (av ?? '').toString().toLowerCase();
     bv = (bv ?? '').toString().toLowerCase();
     return av < bv ? -sortDir : av > bv ? sortDir : 0;
   });
+  filteredCache = rows;
   return rows;
 }
 
-function onFilterChange() { currentPage = 1; renderTable(); }
+/* Immediate filter changes (checkboxes/selects): invalidate cache and re-render now. */
+function onFilterChange() { filteredCache = null; currentPage = 1; renderTable(); }
+
+/* Search input: debounce the re-render ~150ms after typing stops. */
+function onSearchInput() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { filteredCache = null; currentPage = 1; renderTable(); }, 150);
+}
 
 function filtersActive() {
   return document.getElementById('search').value ||
-         document.getElementById('atRiskOnly').checked ||
+         document.getElementById('orphanedOnly').checked ||
          heatFilter || Object.keys(colFilters).length;
 }
 
 function clearFilters() {
   document.getElementById('search').value = '';
-  document.getElementById('atRiskOnly').checked = false;
+  document.getElementById('orphanedOnly').checked = false;
   colFilters = {};
   heatFilter = null;
+  filteredCache = null;
   currentPage = 1;
   closeColFilter();
   setupColFilterIcons();
@@ -668,7 +788,8 @@ function clearFilters() {
 }
 
 function sortBy(key) {
-  if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = key === 'UsagePercent' ? -1 : 1; }
+  if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; }
+  filteredCache = null;
   updateSortIndicators();
   renderTable();
 }
@@ -689,27 +810,12 @@ function computePageSize() {
   return Math.max(6, Math.floor((window.innerHeight - top - 96 - 42) / 44));
 }
 
-function fmtNum(n) {
-  const v = Number(n);
-  if (!isFinite(v)) return '—';
-  return v % 1 === 0 ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
-function usageCell(r) {
-  const pct = Number(r.UsagePercent) || 0;
-  const w = Math.max(2, Math.min(100, pct));
-  return `<div class="usage-cell">
-    <div class="usage-meta">
-      <span class="pct">${pct}%</span>
-      <span class="frac">${fmtNum(r.CurrentValue)} / ${fmtNum(r.Limit)}</span>
-    </div>
-    <div class="ubar"><i class="${esc(r.Severity)}" style="width:${w}%"></i></div>
-  </div>`;
-}
-
-function statusPill(sev) {
-  const label = sev === 'Critical' ? '⛔ Critical' : (sev === 'Warning' ? '⚠ Warning' : '✓ OK');
-  return `<span class="status-pill ${esc(sev)}">${label}</span>`;
+function relTime(iso) {
+  if (!iso) return '<span class="stale">never</span>';
+  const d = new Date(iso);
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  const label = days <= 0 ? 'today' : days === 1 ? '1 day ago' : `${days} days ago`;
+  return (days >= (meta?.StaleDays ?? 180)) ? `<span class="stale">${label}</span>` : label;
 }
 
 function renderTable() {
@@ -723,19 +829,21 @@ function renderTable() {
 
   const tbody = document.getElementById('tbody');
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="${COLS.length}" class="empty-rows">No quotas match the current filters.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${COLS.length}" class="empty-rows">No users match the current filters.</td></tr>`;
   } else {
     tbody.innerHTML = pageRows.map((r, li) => {
       const i = start + li;
       const rec = r.RecommendedAction || {};
+      const pwCls = (r.PasswordStatus === 'Expired' || r.PasswordStatus === 'Active') ? r.PasswordStatus : '';
       return `<tr onclick="openDetail(${i})">
-        <td><span class="principal-name">${esc(r.QuotaName || r.QuotaKey || '(quota)')}</span>
-            <div class="principal-upn">${esc(r.Unit || 'Count')}</div></td>
-        <td>${esc(r.SubscriptionName || '—')}</td>
-        <td>${esc(r.Region || '—')}</td>
-        <td><span class="prov-pill ${esc(r.Provider)}">${esc(r.Provider)}</span></td>
-        <td>${usageCell(r)}</td>
-        <td>${statusPill(r.Severity)}</td>
+        <td><span class="principal-name">${esc(r.DisplayName || '(no name)')}</span>
+            ${r.UserPrincipalName ? `<div class="principal-upn">${esc(r.UserPrincipalName)}</div>` : ''}</td>
+        <td><span class="id-pill ${esc(r.IdentityType || 'User')}">${esc(r.IdentityType || 'User')}</span></td>
+        <td><span class="type-pill ${esc(r.UserType)}">${esc(r.UserType)}</span></td>
+        <td>${r.AccountEnabled ? 'Enabled' : '<span class="disabled-flag">Disabled</span>'}</td>
+        <td>${relTime(r.LastSignIn)}</td>
+        <td><span class="pw-pill ${pwCls}">${esc(r.PasswordStatus || '—')}</span></td>
+        <td>${r.IsOrphaned ? '<span class="orphan-flag">⚠ Orphaned</span>' : 'OK'}</td>
         <td>${esc(rec.Action || '—')}</td>
       </tr>`;
     }).join('');
@@ -778,8 +886,7 @@ function pageList(cur, total) {
 }
 
 function goToPage(p) {
-  const total = Math.max(1, Math.ceil(getFilteredRows().length / pageSize));
-  currentPage = Math.min(Math.max(1, p), total);
+  currentPage = Math.max(1, p);   // upper bound clamped in renderTable() against its computed rows
   renderTable();
 }
 
@@ -810,23 +917,30 @@ function navDetail(delta) {
   renderTable();
   renderDetail();
 }
-
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : '—'; }
 function renderDetail() {
   const r = detailRows[detailIndex];
   if (!r) return;
-  document.getElementById('dTitle').textContent = r.QuotaName || r.QuotaKey || '(quota)';
+  document.getElementById('dTitle').textContent = r.DisplayName || '(no name)';
   const rec = r.RecommendedAction || {};
   const field = (k, v) => `<div class="drow"><div class="k">${k}</div><div class="v">${v}</div></div>`;
-
+  const signIn = r.LastSignIn
+    ? `${fmtDate(r.LastSignIn)} (${r.DaysSinceLastSignIn} days ago)`
+    : '<span class="stale">Never signed in</span>';
   document.getElementById('dBody').innerHTML =
-    field('Quota', `${esc(r.QuotaName || '(quota)')}<span class="status-pill ${esc(r.Severity)}" style="margin-left:8px;">${esc(r.Severity)}</span>`) +
-    field('Usage', usageCell(r)) +
-    field('Current / Limit', `${fmtNum(r.CurrentValue)} / ${fmtNum(r.Limit)} ${esc(r.Unit || 'Count')}`) +
-    field('Headroom', `${fmtNum(r.Headroom)} ${esc(r.Unit || 'Count')} remaining`) +
-    field('Provider', `<span class="prov-pill ${esc(r.Provider)}">${esc(r.Provider)}</span>`) +
-    field('Subscription', `${esc(r.SubscriptionName || '—')}<div class="principal-upn">${esc(r.SubscriptionId || '')}</div>`) +
-    field('Region', esc(r.Region || '—')) +
-    (r.QuotaKey ? field('Quota key', `<code style="font-size:11px;">${esc(r.QuotaKey)}</code>`) : '') +
+    field('User', `${esc(r.DisplayName || '(no name)')}<span class="type-pill ${esc(r.UserType)}" style="margin-left:8px;">${esc(r.UserType)}</span>`) +
+    field('Identity type', `<span class="id-pill ${esc(r.IdentityType || 'User')}">${esc(r.IdentityType || 'User')}</span>`) +
+    field(r.IdentityType === 'Principal' ? 'Application (client) ID' : 'User principal name', esc(r.UserPrincipalName || '—')) +
+    field('Object ID', `<code style="font-size:11px;">${esc(r.Id || '—')}</code>`) +
+    field('Account', r.AccountEnabled ? 'Enabled' : '<span class="disabled-flag">Disabled</span>') +
+    field('Created', fmtDate(r.CreatedDateTime)) +
+    field('Last sign-in', signIn) +
+    (r.LastInteractiveSignIn ? field('Last interactive', fmtDate(r.LastInteractiveSignIn)) : '') +
+    (r.LastNonInteractiveSignIn ? field('Last non-interactive', fmtDate(r.LastNonInteractiveSignIn)) : '') +
+    field('Password status', `<span class="pw-pill ${(r.PasswordStatus==='Expired'||r.PasswordStatus==='Active')?r.PasswordStatus:''}">${esc(r.PasswordStatus || '—')}</span>`) +
+    (r.LastPasswordChange ? field('Last password change', fmtDate(r.LastPasswordChange)) : '') +
+    (r.PasswordExpiry ? field('Password expiry', fmtDate(r.PasswordExpiry)) : '') +
+    (r.IsOrphaned ? field('Status', '<span class="orphan-flag">⚠ Orphaned — expired password or no recent sign-in</span>') : field('Status', 'OK')) +
     field('Recommendation', `<div class="rec-box"><div class="ra">${esc(rec.Action || '—')}</div><div class="rr">${esc(rec.Reason || '')}</div></div>`);
 }
 
@@ -841,9 +955,10 @@ document.addEventListener('keydown', e => {
 function exportCsv() {
   const rows = getFilteredRows();
   if (!rows.length) { alert('No rows to export.'); return; }
-  const headers = ['Quota', 'QuotaKey', 'Subscription', 'SubscriptionId', 'Region', 'Provider',
-                   'CurrentValue', 'Limit', 'Unit', 'UsagePercent', 'Headroom',
-                   'Severity', 'RecommendedAction', 'Reason'];
+  const headers = ['DisplayName', 'IdentityType', 'UserPrincipalName', 'ObjectId', 'UserType', 'AccountEnabled',
+                   'Created', 'LastSignIn', 'DaysSinceLastSignIn', 'NeverSignedIn',
+                   'PasswordStatus', 'LastPasswordChange', 'PasswordExpiry',
+                   'IsOrphaned', 'RecommendedAction', 'Reason'];
   const cell = v => {
     let s = (v ?? '').toString();
     // CSV formula-injection guard: a cell that a spreadsheet would treat as a
@@ -855,25 +970,83 @@ function exportCsv() {
   const lines = [headers.join(',')];
   rows.forEach(r => {
     const rec = r.RecommendedAction || {};
-    lines.push([r.QuotaName, r.QuotaKey, r.SubscriptionName, r.SubscriptionId, r.Region, r.Provider,
-      r.CurrentValue, r.Limit, r.Unit, r.UsagePercent, r.Headroom,
-      r.Severity, rec.Action, rec.Reason].map(cell).join(','));
+    lines.push([r.DisplayName, r.IdentityType || 'User', r.UserPrincipalName, r.Id, r.UserType, r.AccountEnabled,
+      r.CreatedDateTime, r.LastSignIn, r.DaysSinceLastSignIn, r.NeverSignedIn,
+      r.PasswordStatus, r.LastPasswordChange, r.PasswordExpiry,
+      r.IsOrphaned, rec.Action, rec.Reason].map(cell).join(','));
   });
   const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `quota-usage-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `entra-users-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
 /* ── util ───────────────────────────────────────────────────── */
+/* ── copy disable commands ──────────────────────────────────────
+   Builds ready-to-run Azure CLI commands to DISABLE (block sign-in for) the
+   orphaned accounts in the current view. Disabling is the safe, reversible
+   cleanup step — we deliberately do NOT generate `az ad user delete`. Accounts
+   that are already disabled are commented out as a guard, as are any missing a
+   UPN/object-id to target. */
+function copyDisableCommands() {
+  const rows = getFilteredRows().filter(r => r.IsOrphaned);
+  if (!rows.length) { showToast('No orphaned accounts in the current view to disable.'); return; }
+
+  const lines = [
+    '# Review carefully before running. Generated by Entra User Scanner.',
+    '# Disables (blocks sign-in for) orphaned accounts — reversible. No deletes.',
+    '# Already-disabled accounts and those without a target ID are commented out.',
+    ''
+  ];
+  let active = 0;
+  for (const r of rows) {
+    const id  = r.UserPrincipalName || r.Id;
+    const who = `${r.DisplayName || '(no name)'}${r.UserPrincipalName ? ` · ${r.UserPrincipalName}` : ''}`;
+    if (!id) {
+      lines.push(`# [GUARDED: no UPN/object-id] ${who}`);
+    } else if (!r.AccountEnabled) {
+      lines.push(`# [GUARDED: already disabled] az ad user update --id "${id}" --account-enabled false`);
+    } else {
+      lines.push(`# ${who}`);
+      lines.push(`az ad user update --id "${id}" --account-enabled false`);
+      active++;
+    }
+  }
+  const text = lines.join('\n');
+  const done = () => showToast(`Copied ${active} disable command${active === 1 ? '' : 's'} (${rows.length - active} guarded) to clipboard.`);
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch { showToast('Copy failed — clipboard unavailable.'); }
+  document.body.removeChild(ta);
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
 function esc(s) {
   return (s ?? '').toString().replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 </script>
+<div class="toast" id="toast"></div>
 
 <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">
   <span class="ico" id="themeIco">🌙</span><span id="themeLabel">Dark</span>

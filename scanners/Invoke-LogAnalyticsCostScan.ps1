@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+#Requires -Modules Az.Accounts, Az.ResourceGraph
 <#
 .SYNOPSIS
     Projects Log Analytics workspace cost per table, based on each table's billable
@@ -31,7 +33,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $OutputPath       = "$PSScriptRoot/la-cost-scan-results.json",
+    [string] $OutputPath       = "$PSScriptRoot/../data/la-cost-scan-results.json",
     [string] $ProgressPath     = "",          # if set, incremental progress JSON is written here
     [Parameter(Mandatory)][string] $SubscriptionId,
     [Parameter(Mandatory)][string] $ResourceGroup,
@@ -91,8 +93,16 @@ function Format-Exception ($err) {
 
 # Get a bearer token for the given resource from the in-memory Az context. Handles
 # both the SecureString token (Az.Accounts 5+) and the legacy plaintext token.
-function Get-Token ([string]$ResourceUrl) {
-    $t = Get-AzAccessToken -ResourceUrl $ResourceUrl -ErrorAction Stop
+function Get-Token {
+    param(
+        [string]$ResourceUrl,
+        [switch]$Arm
+    )
+    if ($Arm) {
+        $t = Get-AzAccessToken -ResourceTypeName Arm -WarningAction SilentlyContinue -ErrorAction Stop
+    } else {
+        $t = Get-AzAccessToken -ResourceUrl $ResourceUrl -WarningAction SilentlyContinue -ErrorAction Stop
+    }
     if ($t.Token -is [System.Security.SecureString]) {
         return [System.Net.NetworkCredential]::new('', $t.Token).Password
     }
@@ -115,7 +125,7 @@ $errors = [System.Collections.Generic.List[object]]::new()
 
 Set-ScanProgress -Phase "init" -Message "Acquiring tokens..."
 Write-Progress2 "Acquiring ARM + Log Analytics tokens from the active Az session..."
-$armToken = Get-Token "https://management.azure.com/"
+$armToken = Get-Token -Arm
 $armHeaders = @{ Authorization = "Bearer $armToken" }
 
 $wsResourceId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.OperationalInsights/workspaces/$WorkspaceName"
@@ -169,11 +179,11 @@ try {
             $price = [double](Get-Prop $it 'retailPrice')
             if ($price -le 0) { continue }
             switch -Regex ($meter) {
-                'Basic Logs Data Ingestion'         { $basicIngest  = $price; break }
-                '(Pay-as-you-go )?Data Ingestion'   { $ingestPrice  = $price; break }
-                '(Pay-as-you-go )?Data Analyzed'    { $ingestPrice  = $price; break }
-                'Data Archive'                       { $archivePrice = $price; break }
-                'Data Retention'                     { $retentPrice  = $price; break }
+                'Basic Logs'                            { $basicIngest  = $price; Write-Progress2 "Meter '$meter' -> basicIngest=$price"; break }
+                '(?<!Basic Logs )(Pay-as-you-go )?Data Ingestion' { $ingestPrice  = $price; Write-Progress2 "Meter '$meter' -> ingest=$price"; break }
+                '(Pay-as-you-go )?Data Analyzed'        { $ingestPrice  = $price; Write-Progress2 "Meter '$meter' -> ingest=$price"; break }
+                'Data Archive'                          { $archivePrice = $price; Write-Progress2 "Meter '$meter' -> archive=$price"; break }
+                'Data Retention'                        { $retentPrice  = $price; Write-Progress2 "Meter '$meter' -> retention=$price"; break }
             }
         }
         Write-Progress2 "Retail prices: ingest=$ingestPrice retention=$retentPrice archive=$archivePrice $CurrencyCode."
@@ -206,8 +216,8 @@ try {
         foreach ($row in @(Get-Prop $qTables[0] 'rows')) {
             if ($iType -lt 0 -or $iMB -lt 0) { continue }
             $dt = [string]$row[$iType]
-            $mb = 0.0; [double]::TryParse("$($row[$iMB])", [ref]$mb) | Out-Null
-            if ($dt) { $volByTable[$dt.ToLower()] = $mb / 1024.0 }   # MB → GB (31-day total)
+            $mb = 0.0; [double]::TryParse("$($row[$iMB])", [System.Globalization.NumberStyles]::Float -bor [System.Globalization.NumberStyles]::AllowThousands, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$mb) | Out-Null
+            if ($dt) { $volByTable[$dt.ToLowerInvariant()] = $mb / 1024.0 }   # MB → GB (31-day total)
         }
     }
     Write-Progress2 "Usage query returned $($volByTable.Count) billable table(s)."
@@ -246,7 +256,7 @@ foreach ($t in $tableDefs) {
 
     # ── volume ───────────────────────────────────────────────────────────────
     $billGB31 = 0.0
-    if ($volByTable.ContainsKey($name.ToLower())) { $billGB31 = [double]$volByTable[$name.ToLower()] }
+    if ($volByTable.ContainsKey($name.ToLowerInvariant())) { $billGB31 = [double]$volByTable[$name.ToLowerInvariant()] }
     $dailyGB   = if ($LookbackDays -gt 0) { $billGB31 / $LookbackDays } else { 0.0 }
     $monthlyGB = $dailyGB * $DaysPerMonth
 

@@ -1,3 +1,6 @@
+#Requires -Version 7.0
+#Requires -Modules Az.Accounts
+
 <#
 .SYNOPSIS
     Scans Microsoft Entra ID (Azure AD) users for stale / orphaned accounts.
@@ -30,7 +33,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $OutputPath           = "$PSScriptRoot/entra-scan-results.json",
+    [string] $OutputPath           = "$PSScriptRoot/../data/entra-scan-results.json",
     [string] $ProgressPath         = "",      # if set, incremental progress JSON is written here
     [int]    $StaleDays            = 180,     # no sign-in older than this ⇒ stale (≈6 months)
     [int]    $PasswordValidityDays = 90,      # password lifetime for accounts without DisablePasswordExpiration
@@ -88,7 +91,7 @@ function Format-Exception ($err) {
 # Acquire a Microsoft Graph bearer token from the in-memory Az context. Handles
 # both the SecureString token (Az.Accounts 5+) and the legacy plaintext token.
 function Get-GraphToken {
-    $t = Get-AzAccessToken -ResourceUrl "https://graph.microsoft.com" -ErrorAction Stop
+    $t = Get-AzAccessToken -ResourceTypeName MSGraph -WarningAction SilentlyContinue -ErrorAction Stop
     if ($t.Token -is [System.Security.SecureString]) {
         return [System.Net.NetworkCredential]::new('', $t.Token).Password
     }
