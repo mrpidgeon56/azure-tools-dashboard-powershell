@@ -203,6 +203,29 @@ function Send-Response {
 # tools' own re-polls skip the transfer entirely (304) when nothing changed; on a
 # miss the bytes are read once and cached until the file's mtime changes (so a new
 # scan result or an edited page is picked up automatically).
+# Turn a failed scan job's raw error output into a concise, user-facing message for the
+# dashboard's failure banner. Prefers our guard's "Scan produced no results: ..." sentence;
+# otherwise strips PowerShell's error-view chrome (ANSI codes, "Line |", "  N | code",
+# squiggle lines) so the banner shows the cause, not the formatting.
+function Format-JobError {
+    param([string] $Raw)
+    if (-not $Raw) { return 'Scan failed (no error detail was captured).' }
+    $txt = $Raw -replace '\x1b\[[0-9;]*m', ''
+    $m = [regex]::Match($txt, 'Scan produced no results:[^\r\n]*')
+    if ($m.Success) { return ($m.Value -replace '\s+', ' ').Trim() }
+    $keep = foreach ($ln in ($txt -split "`r?`n")) {
+        $l = ($ln -replace '^\s+', '').TrimEnd()
+        if (-not $l) { continue }
+        if ($l -match '^(Line\s*\||&:|Exception:\s*$|\d+\s*\|)') { continue }
+        if ($l -match '^\|?\s*~+\s*$') { continue }
+        ($l -replace '^\|\s*', '' -replace '^Exception:\s*', '')
+    }
+    $clean = ((($keep | Where-Object { $_ } | Select-Object -Unique) -join ' ') -replace '\s+', ' ').Trim()
+    if (-not $clean) { $clean = ($Raw -replace '\s+', ' ').Trim() }
+    if ($clean.Length -gt 500) { $clean = $clean.Substring(0, 500) + '…' }
+    return $clean
+}
+
 function Send-CachedFile {
     param($context, [string]$path, [string]$emptyBody = "{}", [string]$contentType = "application/json; charset=utf-8")
     if (-not (Test-Path $path)) { Send-Response $context -body $emptyBody -contentType $contentType; return }
@@ -517,7 +540,7 @@ try {
                     $jobErrors = $scanJob.ChildJobs | ForEach-Object { $_.JobStateInfo.Reason.Message } | Where-Object { $_ }
                     $err = if ($jobErrors) { $jobErrors -join "; " } else { Receive-Job $scanJob -Keep 2>&1 | Out-String }
                     $scanStatus.State   = "failed"
-                    $scanStatus.Message = $err.Trim()
+                    $scanStatus.Message = (Format-JobError $err)
                     Remove-Job $scanJob -Force
                     $scanJob = $null
                 } elseif ($jobState -eq "Running") {
@@ -588,7 +611,9 @@ try {
                 if ($mgId)   { $p['ManagementGroupId'] = $mgId }
                 if ($subId)  { $p['SingleSubscriptionId'] = $subId }
                 if ($rg)     { $p['ResourceGroup'] = $rg }
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
                 & $script @p
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
             } -ArgumentList $ScanScript, $ResultsPath, $ProgressPath, $effectiveDays, $scopeType, $mgId, $singleSubId, $resourceGrp, $ThrottleLimit
 
             Send-Response $context -body ($scanStatus | ConvertTo-Json)
@@ -635,7 +660,7 @@ try {
                     $jobErrors = $paScanJob.ChildJobs | ForEach-Object { $_.JobStateInfo.Reason.Message } | Where-Object { $_ }
                     $err = if ($jobErrors) { $jobErrors -join "; " } else { Receive-Job $paScanJob -Keep 2>&1 | Out-String }
                     $paScanStatus.State   = "failed"
-                    $paScanStatus.Message = $err.Trim()
+                    $paScanStatus.Message = (Format-JobError $err)
                     Remove-Job $paScanJob -Force
                     $paScanJob = $null
                 } elseif ($jobState -eq "Running") {
@@ -697,7 +722,9 @@ try {
                 if ($mgId)  { $p['ManagementGroupId'] = $mgId }
                 if ($subId) { $p['SingleSubscriptionId'] = $subId }
                 if ($rg)    { $p['ResourceGroup'] = $rg }
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
                 & $script @p
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
             } -ArgumentList $PaScanScript, $PaResultsPath, $PaProgressPath, $scopeType, $mgId, $singleSubId, $resourceGrp, $roles, $ThrottleLimit
 
             Send-Response $context -body ($paScanStatus | ConvertTo-Json)
@@ -741,7 +768,7 @@ try {
                     $jobErrors = $entraScanJob.ChildJobs | ForEach-Object { $_.JobStateInfo.Reason.Message } | Where-Object { $_ }
                     $err = if ($jobErrors) { $jobErrors -join "; " } else { Receive-Job $entraScanJob -Keep 2>&1 | Out-String }
                     $entraScanStatus.State   = "failed"
-                    $entraScanStatus.Message = $err.Trim()
+                    $entraScanStatus.Message = (Format-JobError $err)
                     Remove-Job $entraScanJob -Force
                     $entraScanJob = $null
                 } elseif ($jobState -eq "Running") {
@@ -789,7 +816,9 @@ try {
 
             $entraScanJob = Start-ThreadJob -ScriptBlock {
                 param($script, $output, $progress, $stale, $pw, $incDisabled)
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
                 & $script -OutputPath $output -ProgressPath $progress -StaleDays $stale -PasswordValidityDays $pw -IncludeDisabled $incDisabled
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
             } -ArgumentList $EntraScanScript, $EntraResultsPath, $EntraProgressPath, $staleDays, $pwDays, $includeDisabled
 
             Send-Response $context -body ($entraScanStatus | ConvertTo-Json)
@@ -855,7 +884,7 @@ try {
                     $jobErrors = $tagScanJob.ChildJobs | ForEach-Object { $_.JobStateInfo.Reason.Message } | Where-Object { $_ }
                     $err = if ($jobErrors) { $jobErrors -join "; " } else { Receive-Job $tagScanJob -Keep 2>&1 | Out-String }
                     $tagScanStatus.State   = "failed"
-                    $tagScanStatus.Message = $err.Trim()
+                    $tagScanStatus.Message = (Format-JobError $err)
                     Remove-Job $tagScanJob -Force
                     $tagScanJob = $null
                 } elseif ($jobState -eq "Running") {
@@ -938,7 +967,9 @@ try {
                 if ($mgId)  { $p['ManagementGroupId'] = $mgId }
                 if ($subId) { $p['SingleSubscriptionId'] = $subId }
                 if ($rg)    { $p['ResourceGroup'] = $rg }
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
                 & $script @p
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
             } -ArgumentList $TagScanScript, $TagResultsPath, $TagProgressPath, $requiredTags, $allowedValues, $scopeType, $singleSubId, $mgId, $resourceGrp, $mode
 
             Send-Response $context -body ($tagScanStatus | ConvertTo-Json)
@@ -1013,7 +1044,7 @@ try {
                     $jobErrors = $laScanJob.ChildJobs | ForEach-Object { $_.JobStateInfo.Reason.Message } | Where-Object { $_ }
                     $err = if ($jobErrors) { $jobErrors -join "; " } else { Receive-Job $laScanJob -Keep 2>&1 | Out-String }
                     $laScanStatus.State   = "failed"
-                    $laScanStatus.Message = $err.Trim()
+                    $laScanStatus.Message = (Format-JobError $err)
                     Remove-Job $laScanJob -Force
                     $laScanJob = $null
                 } elseif ($jobState -eq "Running") {
@@ -1071,7 +1102,9 @@ try {
                 param($script, $output, $progress, $subId, $rg, $wsName, $wsId, $lookback)
                 $p = @{ OutputPath = $output; ProgressPath = $progress; SubscriptionId = $subId; ResourceGroup = $rg; WorkspaceName = $wsName; LookbackDays = $lookback }
                 if ($wsId) { $p['WorkspaceId'] = $wsId }
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
                 & $script @p
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
             } -ArgumentList $LaScanScript, $LaResultsPath, $LaProgressPath, $subId, $rg, $wsName, $wsId, $lookback
 
             Send-Response $context -body ($laScanStatus | ConvertTo-Json)
@@ -1113,7 +1146,7 @@ try {
                     $jobErrors = $quotaScanJob.ChildJobs | ForEach-Object { $_.JobStateInfo.Reason.Message } | Where-Object { $_ }
                     $err = if ($jobErrors) { $jobErrors -join "; " } else { Receive-Job $quotaScanJob -Keep 2>&1 | Out-String }
                     $quotaScanStatus.State   = "failed"
-                    $quotaScanStatus.Message = $err.Trim()
+                    $quotaScanStatus.Message = (Format-JobError $err)
                     Remove-Job $quotaScanJob -Force
                     $quotaScanJob = $null
                 } elseif ($jobState -eq "Running") {
@@ -1169,7 +1202,9 @@ try {
                 $p = @{ OutputPath = $output; ProgressPath = $progress; CriticalThreshold = $critical; WarningThreshold = $warning; ScopeType = $scopeType }
                 if ($mgId)      { $p['ManagementGroupId'] = $mgId }
                 if ($singleSub) { $p['SingleSubscriptionId'] = $singleSub }
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
                 & $script @p
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
             } -ArgumentList $QuotaScanScript, $QuotaResultsPath, $QuotaProgressPath, $scopeType, $mgId, $singleSub, $critical, $warning
 
             Send-Response $context -body ($quotaScanStatus | ConvertTo-Json)
@@ -1216,7 +1251,7 @@ try {
                     } elseif ($jobState -eq 'Failed') {
                         $jobErrors = $entry.Job.ChildJobs | ForEach-Object { $_.JobStateInfo.Reason.Message } | Where-Object { $_ }
                         $err = if ($jobErrors) { $jobErrors -join '; ' } else { Receive-Job $entry.Job -Keep 2>&1 | Out-String }
-                        $entry.Status = @{ State = 'failed'; Message = $err.Trim() }
+                        $entry.Status = @{ State = 'failed'; Message = (Format-JobError $err) }
                         Remove-Job $entry.Job -Force; $entry.Job = $null
                     } elseif ($jobState -eq 'Running') {
                         $entry.Status = @{ State = 'running'; Message = 'Scan in progress...' }
@@ -1275,7 +1310,9 @@ try {
                         if ($scopeMode -eq 'graph' -and $rg) { $p['ResourceGroup'] = $rg }
                     }
                     if ($extra) { foreach ($k in $extra.Keys) { $p[$k] = $extra[$k] } }
+                    $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
                     & $script @p
+                    if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
                 } -ArgumentList $tool.ScanScript, $tool.ResultsPath, $tool.ProgressPath, $tool.Scope, $scopeType, $mgId, $singleSub, $resourceGrp, $extraVals
 
                 Send-Response $context -body ($entry.Status | ConvertTo-Json)
