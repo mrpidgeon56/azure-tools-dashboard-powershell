@@ -72,12 +72,14 @@ if ($azContext -and $azContext.Account) {
     Write-Host "  Not signed in — stop the server (Ctrl+C), run Connect-AzAccount, then re-run ./Start-Dashboard.ps1." -ForegroundColor Yellow
 }
 
-# Scans run SYNCHRONOUSLY in this (the server's) main runspace via Invoke-ScanSync — not in a
-# Start-ThreadJob or Start-Job. Running in the main runspace reuses the already-loaded Az modules
-# and live context, and (crucially) never re-imports Az into a child runspace, which avoids the
-# Az.Accounts AssemblyLoadContext "assembly already loaded" conflict that breaks scans when more
-# than one Az.Accounts version is installed. Trade-off: the server is unresponsive (no live
-# progress) for the duration of a scan. ThreadJob is therefore no longer required.
+# ── Ensure ThreadJob is available ────────────────────────────────────────────
+# We run scans with Start-ThreadJob (NOT Start-Job). ThreadJob runs in-process,
+# so the scan inherits the already-loaded Az modules AND the live Az context —
+# no Save/Import-AzContext, no token-expiry or MSAL-cache problems in a child process.
+if (-not (Get-Command Start-ThreadJob -ErrorAction SilentlyContinue)) {
+    Write-Error "The ThreadJob module is required. Install it with: Install-Module ThreadJob -Scope CurrentUser"
+    exit 1
+}
 
 # Ensure the runtime-artifact directory exists (it's gitignored, so a fresh clone may lack it).
 $null = New-Item -ItemType Directory -Path "$PSScriptRoot/data" -Force -ErrorAction SilentlyContinue
@@ -222,27 +224,6 @@ function Format-JobError {
     if (-not $clean) { $clean = ($Raw -replace '\s+', ' ').Trim() }
     if ($clean.Length -gt 500) { $clean = $clean.Substring(0, 500) + '…' }
     return $clean
-}
-
-# Run a scanner SYNCHRONOUSLY in the server's main runspace and return a final status hashtable.
-# Running in the main runspace (no Start-ThreadJob) means Az is never re-imported into a child
-# runspace, which sidesteps the Az.Accounts AssemblyLoadContext "assembly already loaded" conflict
-# that breaks scans when multiple Az.Accounts versions are installed. Callers that build scanners
-# using ForEach-Object -Parallel should pass ThrottleLimit=1 in $Params so no nested runspaces spawn.
-# Trade-off: the single-threaded server is unresponsive (no live progress) until the scan returns.
-function Invoke-ScanSync {
-    param([string] $Script, [hashtable] $Params, [string] $OutputPath, [string] $StartedAt)
-    $before = if (Test-Path $OutputPath) { (Get-Item $OutputPath).LastWriteTimeUtc.Ticks } else { 0 }
-    try {
-        & $Script @Params
-        if (-not ((Test-Path $OutputPath) -and (Get-Item $OutputPath).LastWriteTimeUtc.Ticks -gt $before)) {
-            $r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }
-            throw "Scan produced no results: $r"
-        }
-        return @{ State = 'completed'; StartedAt = $StartedAt; Message = 'Scan completed successfully.' }
-    } catch {
-        return @{ State = 'failed'; StartedAt = $StartedAt; Message = (Format-JobError "$_") }
-    }
 }
 
 function Send-CachedFile {
@@ -623,19 +604,18 @@ try {
             # Clear any stale progress from a previous run so the bar starts at 0.
             if (Test-Path $ProgressPath) { Remove-Item $ProgressPath -Force -ErrorAction SilentlyContinue }
 
-            # Run the scan SYNCHRONOUSLY in the server's main runspace (NOT Start-ThreadJob) and
-            # force the scanner sequential (ThrottleLimit=1 → no ForEach-Object -Parallel). This
-            # means ZERO child runspaces, so Az is never re-imported into the process. That
-            # sidesteps the Az.Accounts AssemblyLoadContext "assembly with same name is already
-            # loaded" conflict that otherwise breaks scans when more than one Az.Accounts version
-            # is installed. Trade-off: the dashboard is unresponsive (no live progress) until the
-            # scan returns; the HTTP response carries the final completed/failed status.
-            # Sequential (ThrottleLimit=1) + main-runspace = zero child runspaces (see Invoke-ScanSync).
-            $p = @{ OutputPath = $ResultsPath; ProgressPath = $ProgressPath; LookbackDays = $effectiveDays; ThrottleLimit = 1; ScopeType = $scopeType }
-            if ($mgId)        { $p['ManagementGroupId']    = $mgId }
-            if ($singleSubId) { $p['SingleSubscriptionId'] = $singleSubId }
-            if ($resourceGrp) { $p['ResourceGroup']        = $resourceGrp }
-            $scanStatus = Invoke-ScanSync -Script $ScanScript -Params $p -OutputPath $ResultsPath -StartedAt $scanStatus.StartedAt
+            # Start-ThreadJob runs in-process: inherits loaded Az modules + live context.
+            $scanJob = Start-ThreadJob -ScriptBlock {
+                param($script, $output, $progress, $days, $scopeType, $mgId, $subId, $rg, $throttle)
+                $p = @{ OutputPath = $output; ProgressPath = $progress; LookbackDays = $days; ThrottleLimit = $throttle; ScopeType = $scopeType }
+                if ($mgId)   { $p['ManagementGroupId'] = $mgId }
+                if ($subId)  { $p['SingleSubscriptionId'] = $subId }
+                if ($rg)     { $p['ResourceGroup'] = $rg }
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
+                & $script @p
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
+            } -ArgumentList $ScanScript, $ResultsPath, $ProgressPath, $effectiveDays, $scopeType, $mgId, $singleSubId, $resourceGrp, $ThrottleLimit
+
             Send-Response $context -body ($scanStatus | ConvertTo-Json)
             continue
         }
@@ -736,12 +716,17 @@ try {
 
             if (Test-Path $PaProgressPath) { Remove-Item $PaProgressPath -Force -ErrorAction SilentlyContinue }
 
-            # Synchronous main-runspace scan, sequential (ThrottleLimit=1 — PA uses -Parallel). No child runspaces.
-            $p = @{ OutputPath = $PaResultsPath; ProgressPath = $PaProgressPath; PrivilegedRoles = $roles; ThrottleLimit = 1; ScopeType = $scopeType }
-            if ($mgId)        { $p['ManagementGroupId']    = $mgId }
-            if ($singleSubId) { $p['SingleSubscriptionId'] = $singleSubId }
-            if ($resourceGrp) { $p['ResourceGroup']        = $resourceGrp }
-            $paScanStatus = Invoke-ScanSync -Script $PaScanScript -Params $p -OutputPath $PaResultsPath -StartedAt $paScanStatus.StartedAt
+            $paScanJob = Start-ThreadJob -ScriptBlock {
+                param($script, $output, $progress, $scopeType, $mgId, $subId, $rg, $roles, $throttle)
+                $p = @{ OutputPath = $output; ProgressPath = $progress; PrivilegedRoles = $roles; ThrottleLimit = $throttle; ScopeType = $scopeType }
+                if ($mgId)  { $p['ManagementGroupId'] = $mgId }
+                if ($subId) { $p['SingleSubscriptionId'] = $subId }
+                if ($rg)    { $p['ResourceGroup'] = $rg }
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
+                & $script @p
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
+            } -ArgumentList $PaScanScript, $PaResultsPath, $PaProgressPath, $scopeType, $mgId, $singleSubId, $resourceGrp, $roles, $ThrottleLimit
+
             Send-Response $context -body ($paScanStatus | ConvertTo-Json)
             continue
         }
@@ -829,9 +814,13 @@ try {
             $entraScanStatus = @{ State = "running"; StartedAt = (Get-Date -Format "o"); Message = "Scan started (stale ${staleDays}d, pw ${pwDays}d)." }
             if (Test-Path $EntraProgressPath) { Remove-Item $EntraProgressPath -Force -ErrorAction SilentlyContinue }
 
-            # Synchronous main-runspace scan (Entra is sequential — no child runspaces).
-            $p = @{ OutputPath = $EntraResultsPath; ProgressPath = $EntraProgressPath; StaleDays = $staleDays; PasswordValidityDays = $pwDays; IncludeDisabled = $includeDisabled }
-            $entraScanStatus = Invoke-ScanSync -Script $EntraScanScript -Params $p -OutputPath $EntraResultsPath -StartedAt $entraScanStatus.StartedAt
+            $entraScanJob = Start-ThreadJob -ScriptBlock {
+                param($script, $output, $progress, $stale, $pw, $incDisabled)
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
+                & $script -OutputPath $output -ProgressPath $progress -StaleDays $stale -PasswordValidityDays $pw -IncludeDisabled $incDisabled
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
+            } -ArgumentList $EntraScanScript, $EntraResultsPath, $EntraProgressPath, $staleDays, $pwDays, $includeDisabled
+
             Send-Response $context -body ($entraScanStatus | ConvertTo-Json)
             continue
         }
@@ -972,12 +961,17 @@ try {
             $tagScanStatus = @{ State = "running"; StartedAt = (Get-Date -Format "o"); Message = "Scan started ($scopeLabel, $mode, $(@($requiredTags).Count) required tag(s))." }
             if (Test-Path $TagProgressPath) { Remove-Item $TagProgressPath -Force -ErrorAction SilentlyContinue }
 
-            # Synchronous main-runspace scan (Tag Auditor is sequential — no child runspaces).
-            $p = @{ OutputPath = $TagResultsPath; ProgressPath = $TagProgressPath; RequiredTags = $requiredTags; AllowedTagValues = $allowedValues; Mode = $mode; ScopeType = $scopeType }
-            if ($mgId)        { $p['ManagementGroupId']    = $mgId }
-            if ($singleSubId) { $p['SingleSubscriptionId'] = $singleSubId }
-            if ($resourceGrp) { $p['ResourceGroup']        = $resourceGrp }
-            $tagScanStatus = Invoke-ScanSync -Script $TagScanScript -Params $p -OutputPath $TagResultsPath -StartedAt $tagScanStatus.StartedAt
+            $tagScanJob = Start-ThreadJob -ScriptBlock {
+                param($script, $output, $progress, $required, $allowed, $scopeType, $subId, $mgId, $rg, $mode)
+                $p = @{ OutputPath = $output; ProgressPath = $progress; RequiredTags = $required; AllowedTagValues = $allowed; Mode = $mode; ScopeType = $scopeType }
+                if ($mgId)  { $p['ManagementGroupId'] = $mgId }
+                if ($subId) { $p['SingleSubscriptionId'] = $subId }
+                if ($rg)    { $p['ResourceGroup'] = $rg }
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
+                & $script @p
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
+            } -ArgumentList $TagScanScript, $TagResultsPath, $TagProgressPath, $requiredTags, $allowedValues, $scopeType, $singleSubId, $mgId, $resourceGrp, $mode
+
             Send-Response $context -body ($tagScanStatus | ConvertTo-Json)
             continue
         }
@@ -1104,10 +1098,15 @@ try {
             $laScanStatus = @{ State = "running"; StartedAt = (Get-Date -Format "o"); Message = "Projecting cost for workspace '$wsName'." }
             if (Test-Path $LaProgressPath) { Remove-Item $LaProgressPath -Force -ErrorAction SilentlyContinue }
 
-            # Synchronous main-runspace scan (Log Analytics projector is sequential — no child runspaces).
-            $p = @{ OutputPath = $LaResultsPath; ProgressPath = $LaProgressPath; SubscriptionId = $subId; ResourceGroup = $rg; WorkspaceName = $wsName; LookbackDays = $lookback }
-            if ($wsId) { $p['WorkspaceId'] = $wsId }
-            $laScanStatus = Invoke-ScanSync -Script $LaScanScript -Params $p -OutputPath $LaResultsPath -StartedAt $laScanStatus.StartedAt
+            $laScanJob = Start-ThreadJob -ScriptBlock {
+                param($script, $output, $progress, $subId, $rg, $wsName, $wsId, $lookback)
+                $p = @{ OutputPath = $output; ProgressPath = $progress; SubscriptionId = $subId; ResourceGroup = $rg; WorkspaceName = $wsName; LookbackDays = $lookback }
+                if ($wsId) { $p['WorkspaceId'] = $wsId }
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
+                & $script @p
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
+            } -ArgumentList $LaScanScript, $LaResultsPath, $LaProgressPath, $subId, $rg, $wsName, $wsId, $lookback
+
             Send-Response $context -body ($laScanStatus | ConvertTo-Json)
             continue
         }
@@ -1198,11 +1197,16 @@ try {
             $quotaScanStatus = @{ State = "running"; StartedAt = (Get-Date -Format "o"); Message = "Scanning quotas ($scopeLabel)." }
             if (Test-Path $QuotaProgressPath) { Remove-Item $QuotaProgressPath -Force -ErrorAction SilentlyContinue }
 
-            # Synchronous main-runspace scan (Quota scanner is sequential — no child runspaces).
-            $p = @{ OutputPath = $QuotaResultsPath; ProgressPath = $QuotaProgressPath; CriticalThreshold = $critical; WarningThreshold = $warning; ScopeType = $scopeType }
-            if ($mgId)      { $p['ManagementGroupId']    = $mgId }
-            if ($singleSub) { $p['SingleSubscriptionId'] = $singleSub }
-            $quotaScanStatus = Invoke-ScanSync -Script $QuotaScanScript -Params $p -OutputPath $QuotaResultsPath -StartedAt $quotaScanStatus.StartedAt
+            $quotaScanJob = Start-ThreadJob -ScriptBlock {
+                param($script, $output, $progress, $scopeType, $mgId, $singleSub, $critical, $warning)
+                $p = @{ OutputPath = $output; ProgressPath = $progress; CriticalThreshold = $critical; WarningThreshold = $warning; ScopeType = $scopeType }
+                if ($mgId)      { $p['ManagementGroupId'] = $mgId }
+                if ($singleSub) { $p['SingleSubscriptionId'] = $singleSub }
+                $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
+                & $script @p
+                if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
+            } -ArgumentList $QuotaScanScript, $QuotaResultsPath, $QuotaProgressPath, $scopeType, $mgId, $singleSub, $critical, $warning
+
             Send-Response $context -body ($quotaScanStatus | ConvertTo-Json)
             continue
         }
@@ -1295,16 +1299,22 @@ try {
                 if (Test-Path $tool.ProgressPath) { Remove-Item $tool.ProgressPath -Force -ErrorAction SilentlyContinue }
                 $entry.Status = @{ State = 'running'; StartedAt = (Get-Date -Format 'o'); Message = "Scan started ($($tool.Slug))." }
 
-                # Synchronous main-runspace scan (ported scanners are sequential — no child runspaces).
-                $p = @{ OutputPath = $tool.ResultsPath; ProgressPath = $tool.ProgressPath }
-                if ($tool.Scope -eq 'graph' -or $tool.Scope -eq 'subscription') {
-                    $p['ScopeType'] = $scopeType
-                    if ($mgId)      { $p['ManagementGroupId']    = $mgId }
-                    if ($singleSub) { $p['SingleSubscriptionId'] = $singleSub }
-                    if ($tool.Scope -eq 'graph' -and $resourceGrp) { $p['ResourceGroup'] = $resourceGrp }
-                }
-                foreach ($k in $extraVals.Keys) { $p[$k] = $extraVals[$k] }
-                $entry.Status = Invoke-ScanSync -Script $tool.ScanScript -Params $p -OutputPath $tool.ResultsPath -StartedAt $entry.Status.StartedAt
+                $entry.Job = Start-ThreadJob -ScriptBlock {
+                    param($script, $output, $progress, $scopeMode, $scopeType, $mgId, $subId, $rg, $extra)
+                    $p = @{ OutputPath = $output; ProgressPath = $progress }
+                    # Only scope-based tools get the scope params; 'params'/'none' tools take none.
+                    if ($scopeMode -eq 'graph' -or $scopeMode -eq 'subscription') {
+                        $p['ScopeType'] = $scopeType
+                        if ($mgId)  { $p['ManagementGroupId']    = $mgId }
+                        if ($subId) { $p['SingleSubscriptionId'] = $subId }
+                        if ($scopeMode -eq 'graph' -and $rg) { $p['ResourceGroup'] = $rg }
+                    }
+                    if ($extra) { foreach ($k in $extra.Keys) { $p[$k] = $extra[$k] } }
+                    $__before = if (Test-Path $output) { (Get-Item $output).LastWriteTimeUtc.Ticks } else { 0 }
+                    & $script @p
+                    if (-not ((Test-Path $output) -and (Get-Item $output).LastWriteTimeUtc.Ticks -gt $__before)) { $__r = if ($Error.Count) { "$($Error[0])" } else { 'the scanner failed to start — check that all required Az modules are installed (run ./Test-Prerequisites.ps1)' }; throw "Scan produced no results: $__r" }
+                } -ArgumentList $tool.ScanScript, $tool.ResultsPath, $tool.ProgressPath, $tool.Scope, $scopeType, $mgId, $singleSub, $resourceGrp, $extraVals
+
                 Send-Response $context -body ($entry.Status | ConvertTo-Json)
                 continue
             }

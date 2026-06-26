@@ -1848,36 +1848,20 @@ async function startScan() {
       if (!bodyObj.singleSubscriptionId || !bodyObj.resourceGroup) { alert('Pick a subscription and resource group, or change Target.'); return; }
     }
     const body = JSON.stringify(bodyObj);
-    // The scan now runs synchronously in the server's main runspace (to avoid the Az.Accounts
-    // child-runspace assembly conflict), so this request BLOCKS until the scan finishes and
-    // returns the final status — no progress polling, and the dashboard is unresponsive meanwhile.
-    clearScanError();
-    setStatus('running');
-    renderProgress({ Phase: 'scanning', Percent: 0, Message: 'Scanning… the dashboard pauses until this finishes (can take a few minutes).' });
     const r = await fetch('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body
     });
-    if (r.status === 409) { showToast('A scan is already running.'); setStatus('idle'); hideProgress(); return; }
-    if (!r.ok) { showToast('Failed to start scan.'); setStatus('failed'); hideProgress(); return; }
-    const s = await r.json();
-    if (s.State === 'failed') {
-      setStatus('failed', s.Message);
-      hideProgress();
-      showScanError(s.Message);
-      showToast('Scan failed.');
-    } else {
-      renderProgress({ Phase: 'done', Percent: 100, Message: 'Scan complete.' });
-      setStatus('done');
-      await loadResults();
-      showToast('Scan complete.');
-      setTimeout(hideProgress, 1500);
-    }
+    if (r.status === 409) { showToast('A scan is already running.'); return; }
+    if (!r.ok) { showToast('Failed to start scan.'); return; }
+    scanStartMs = Date.now();
+    clearScanError();
+    setStatus('running');
+    renderProgress(null);
+    pollStatus();
   } catch {
-    setStatus('failed');
-    hideProgress();
-    showScanError('Lost connection to the server during the scan — it may still be running. Refresh in a moment.');
+    showToast('Cannot reach server. Is Start-Dashboard.ps1 running?');
   }
 }
 
