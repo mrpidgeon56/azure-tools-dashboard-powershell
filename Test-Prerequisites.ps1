@@ -16,6 +16,10 @@
     Each module is also checked against a minimum version; an installed-but-too-old
     module is flagged (FAIL) the same as a missing one.
 
+    Finally, it probes whether Az.Accounts can load inside a child runspace
+    (Start-ThreadJob) — a recent Az.Accounts regression breaks this and makes scans
+    return empty results, so the probe flags a known-bad build before you run a scan.
+
 .EXAMPLE
     ./Test-Prerequisites.ps1
     # Exits 0 if everything required is present, 1 otherwise.
@@ -73,6 +77,38 @@ foreach ($m in $modules) {
     }
     Add-Check -Name $m.Name -Ok $ok -Detail $detail `
         -Fix "Install-Module $($m.Name) -MinimumVersion $($m.MinVersion) -Scope CurrentUser" -Optional $m.Optional
+}
+
+# ── Az.Accounts child-runspace probe ───────────────────────────────────────────
+# Scans run inside child runspaces (Start-ThreadJob + ForEach-Object -Parallel). A recent
+# Az.Accounts AssemblyLoadContext regression throws "Assembly with same name is already
+# loaded" when the module is imported a SECOND time in the same process — which silently
+# produces empty scans (the job dies the instant it touches Az). Probe the actual failure
+# mode here rather than maintaining a version blocklist.
+$azMod = Get-Module -ListAvailable -Name Az.Accounts | Sort-Object Version -Descending | Select-Object -First 1
+$tjMod = Get-Module -ListAvailable -Name ThreadJob   | Sort-Object Version -Descending | Select-Object -First 1
+if ($azMod -and $tjMod) {
+    try {
+        Import-Module Az.Accounts -ErrorAction Stop
+        Import-Module ThreadJob   -ErrorAction Stop
+        $job = Start-ThreadJob -ScriptBlock {
+            try { Import-Module Az.Accounts -ErrorAction Stop; 'ok' } catch { $_.Exception.Message }
+        }
+        $null = Wait-Job $job -Timeout 60
+        $probe = (@(Receive-Job $job) -join ' ').Trim()
+        Remove-Job $job -Force -ErrorAction SilentlyContinue
+        if ($probe -eq 'ok') {
+            Add-Check -Name "Az.Accounts in ThreadJob" -Ok $true -Detail "v$($azMod.Version) loads cleanly in a child runspace"
+        } else {
+            $short = if ($probe.Length -gt 100) { $probe.Substring(0, 100) + '…' } else { $probe }
+            Add-Check -Name "Az.Accounts in ThreadJob" -Ok $false `
+                -Detail "v$($azMod.Version) FAILS in a child runspace — scans run there and will return empty. ($short)" `
+                -Fix "Known Az.Accounts regression. Try 'Update-Module Az.Accounts' (may be patched), or pin a working build: Install-Module Az.Accounts -RequiredVersion 5.3.0 -Force -Scope CurrentUser"
+        }
+    } catch {
+        # If the probe itself can't run, don't block startup over it — just note it.
+        Add-Check -Name "Az.Accounts in ThreadJob" -Ok $true -Detail "probe skipped ($($_.Exception.Message))" -Optional $true
+    }
 }
 
 # ── Report ───────────────────────────────────────────────────────────────────

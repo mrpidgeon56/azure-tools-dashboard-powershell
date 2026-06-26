@@ -77,6 +77,22 @@
   .status-pill.running  { background: #1e3a5c; color: #6ab8f7; }
   .status-pill.done     { background: #1a3d2e; color: var(--ok);  }
   .status-pill.failed   { background: #3d1a1a; color: var(--danger); }
+  /* Persistent scan-failure banner — a failed scan must never look like an empty result. */
+  .scan-error {
+    display: flex; align-items: flex-start; gap: 12px;
+    margin: 0 0 20px; padding: 14px 16px;
+    background: rgba(240,106,106,.10);
+    border: 1px solid var(--danger); border-radius: var(--radius);
+    color: var(--text);
+  }
+  .scan-error[hidden] { display: none; }
+  .scan-error-icon  { font-size: 18px; line-height: 1.3; }
+  .scan-error-body  { flex: 1; min-width: 0; }
+  .scan-error-title { font-weight: 600; color: var(--danger); margin-bottom: 4px; }
+  .scan-error-msg   { font-size: 13px; color: var(--muted); white-space: pre-wrap; word-break: break-word;
+                      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .scan-error-x { background: none; border: none; color: var(--muted); font-size: 15px; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+  .scan-error-x:hover { color: var(--danger); background: rgba(240,106,106,.12); }
   .spinner {
     width: 10px; height: 10px; border-radius: 50%;
     border: 2px solid rgba(106,184,247,.3);
@@ -653,6 +669,16 @@
       </div>
     </div>
   </section>
+
+  <!-- Scan-failure banner (shown when /api/status reports State=failed). Stays visible even with no data. -->
+  <div class="scan-error" id="scanError" hidden>
+    <span class="scan-error-icon">⚠️</span>
+    <div class="scan-error-body">
+      <div class="scan-error-title">Scan failed</div>
+      <div class="scan-error-msg" id="scanErrorMsg"></div>
+    </div>
+    <button class="scan-error-x" onclick="clearScanError()" title="Dismiss" aria-label="Dismiss">✕</button>
+  </div>
 
   <!-- Summary cards -->
   <div class="cards" id="cards">
@@ -1830,6 +1856,7 @@ async function startScan() {
     if (r.status === 409) { showToast('A scan is already running.'); return; }
     if (!r.ok) { showToast('Failed to start scan.'); return; }
     scanStartMs = Date.now();
+    clearScanError();
     setStatus('running');
     renderProgress(null);
     pollStatus();
@@ -1855,6 +1882,18 @@ async function cancelScan() {
   }
 }
 
+// Persistent failure banner so a failed scan is never mistaken for "completed, no data".
+function showScanError(msg) {
+  const el = document.getElementById('scanError');
+  const m  = document.getElementById('scanErrorMsg');
+  if (m)  m.textContent = (msg && String(msg).trim()) || 'The scan job failed before producing results.';
+  if (el) el.hidden = false;
+}
+function clearScanError() {
+  const el = document.getElementById('scanError');
+  if (el) el.hidden = true;
+}
+
 function pollStatus() {
   clearTimeout(pollTimer);
   pollTimer = setTimeout(async () => {
@@ -1866,6 +1905,7 @@ function pollStatus() {
         renderProgress(s.Progress);
         pollTimer = setTimeout(pollStatus, 1200);
       } else if (s.State === 'completed') {
+        clearScanError();
         renderProgress({ Phase: 'done', Percent: 100, Message: 'Scan complete.' });
         setStatus('done');
         await loadResults();
@@ -1882,6 +1922,7 @@ function pollStatus() {
       } else if (s.State === 'failed') {
         setStatus('failed', s.Message);
         hideProgress();
+        showScanError(s.Message);
         showToast('Scan failed: ' + s.Message);
       } else if (s.State === 'cancelled') {
         scanStartMs = null;
@@ -2137,6 +2178,9 @@ fetch('/api/status').then(r => r.json()).then(s => {
     // Resume: prefer the server's StartedAt so the ETA reflects true elapsed time.
     scanStartMs = s.StartedAt ? new Date(s.StartedAt).getTime() : Date.now();
     setStatus('running'); renderProgress(s.Progress); pollStatus();
+  } else if (s.State === 'failed') {
+    // A scan failed and the page was (re)loaded — keep the failure visible, don't show a blank "no data".
+    setStatus('failed', s.Message); showScanError(s.Message);
   }
 }).catch(() => {});
 </script>
