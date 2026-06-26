@@ -70,6 +70,9 @@
     border-radius: var(--radius); padding: 16px 18px; margin-bottom: 20px;
   }
   .scan-banner.active { display: block; }
+  .scan-banner.failed { border-color: var(--danger); background: rgba(240,106,106,.10); }
+  .scan-banner.failed .phase { color: var(--danger); white-space: normal; word-break: break-word; }
+  .scan-banner.failed .pct, .scan-banner.failed .bar { display: none; }
   .scan-banner .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .scan-banner .phase { font-weight: 600; }
   .scan-banner .pct { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -607,7 +610,7 @@ async function cancelScan() {
 function setScanning(on) {
   document.getElementById('scanBtn').disabled = on;
   document.getElementById('cancelBtn').style.display = on ? '' : 'none';
-  document.getElementById('scanBanner').classList.toggle('active', on);
+  document.getElementById('scanBanner').classList.toggle('active', on); if (on) document.getElementById('scanBanner').classList.remove('failed');
 }
 
 async function pollStatus() {
@@ -630,7 +633,7 @@ async function pollStatus() {
       setScanning(false);
       if (s.State === 'failed') {
         document.getElementById('scanPhase').textContent = 'Scan failed: ' + (s.Message || 'unknown error');
-        document.getElementById('scanBanner').classList.add('active');
+        document.getElementById('scanBanner').classList.add('active', 'failed');
       } else if (s.State === 'cancelled') {
         setScanning(false);
       } else {
