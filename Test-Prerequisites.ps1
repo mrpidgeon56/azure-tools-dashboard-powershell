@@ -77,6 +77,16 @@ foreach ($m in $modules) {
     }
     Add-Check -Name $m.Name -Ok $ok -Detail $detail `
         -Fix "Install-Module $($m.Name) -MinimumVersion $($m.MinVersion) -Scope CurrentUser" -Optional $m.Optional
+
+    # Multiple installed versions of an Az module collide at load time with
+    # "Could not load assembly … assembly with same name is already loaded" and break scans.
+    # Flag it (warning, not fatal — duplicates are common and don't always conflict).
+    $allVers = @(Get-Module -ListAvailable -Name $m.Name | Select-Object -ExpandProperty Version)
+    if ($allVers.Count -gt 1) {
+        Add-Check -Name "$($m.Name) (one version)" -Ok $false -Optional $true `
+            -Detail "$($allVers.Count) versions installed ($(($allVers | ForEach-Object { "$_" }) -join ', ')) — duplicates can cause 'assembly already loaded' errors mid-scan" `
+            -Fix "Collapse to one: Uninstall-Module $($m.Name) -AllVersions -Force ; Install-Module $($m.Name) -Scope CurrentUser"
+    }
 }
 
 # ── Az.Accounts child-runspace probe ───────────────────────────────────────────

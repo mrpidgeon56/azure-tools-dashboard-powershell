@@ -48,7 +48,7 @@ param(
     [string] $QuotaResultsPath  = "$PSScriptRoot/data/quota-scan-results.json",
     [string] $QuotaProgressPath = "$PSScriptRoot/data/quota-scan-progress.json",
     [string] $QuotaScanScript   = "$PSScriptRoot/scanners/Invoke-QuotaScan.ps1",
-    [int]    $LookbackDays = 14,
+    [int]    $LookbackDays = 90,   # default idle-detection window (the UI window selector was removed; narrow results with the table filters)
     [int]    $ThrottleLimit = 8   # max resource groups scanned concurrently (1 = sequential)
 )
 

@@ -3,7 +3,7 @@
 <#
 .SYNOPSIS
     Scans all subscriptions in an Azure tenant and flags resource groups with no activity
-    in the last 14 days across three signals: Activity Log, resource metrics, and lastModifiedTime.
+    in the last 90 days across three signals: Activity Log, resource metrics, and lastModifiedTime.
     Also pulls estimated monthly cost per resource group via Cost Management.
 
 .OUTPUTS
@@ -17,7 +17,7 @@
 #>
 [CmdletBinding()]
 param(
-    [int]    $LookbackDays  = 14,
+    [int]    $LookbackDays  = 90,   # idle-detection window: no activity in this many days = idle
     [string] $OutputPath    = "$PSScriptRoot/../data/scan-results.json",
     [string] $ProgressPath  = "",                # if set, incremental progress JSON is written here
     [string] $OwnerTagName  = "Owner",          # tag key used in your tenant for ownership
