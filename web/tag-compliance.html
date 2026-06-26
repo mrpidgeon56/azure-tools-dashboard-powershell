@@ -787,6 +787,7 @@ async function startScan() {
     if (!body.singleSubscriptionId || !body.resourceGroup) { alert('Pick a subscription and resource group, or change Target.'); return; }
   }
   try {
+    setScanning(true);   // show the indicator during the (now synchronous) scan
     const r = await fetch('/api/tags/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (r.status === 409) { alert('A scan is already running.'); return; }
     setScanning(true);
