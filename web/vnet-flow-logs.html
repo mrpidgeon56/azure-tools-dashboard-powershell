@@ -435,6 +435,7 @@
     const p = scanParams();
     if (!p) { alert('Enter a storage account (or a flow log resource id) first.'); return; }
     try {
+      setScanning(true);   // show the indicator during the (now synchronous) scan
       const r = await fetch('/api/vnetflowlogs/scan', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(p)

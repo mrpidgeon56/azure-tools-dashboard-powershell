@@ -418,6 +418,7 @@
     const ws = selectedWorkspace();
     if (!ws) { alert('Pick a subscription, resource group and workspace first.'); return; }
     try {
+      setScanning(true);   // show the indicator during the (now synchronous) scan
       const r = await fetch('/api/la/scan', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...ws, lookbackDays: 31 })
